@@ -79,7 +79,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
                     prices = meterDetails['prices']
                     meterType = meterDetails['activeMeterType']
                     meterPrices = prices[meterType]
-                    budget_billing = budgetDetails[0] if budgetDetails[0].get["ean"] == eanNr else budgetDetails[1]
+                    budget_billing = budgetDetails[0] if budgetDetails[0].get("ean") == eanNr else budgetDetails[1]
                     already_paid = budget_billing.get("simulation").get("totalPaidAmount")
                     period_quantities = consumptionDetails.get("periodQuantities", {})
 
