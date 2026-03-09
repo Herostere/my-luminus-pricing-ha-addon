@@ -131,13 +131,13 @@ class API:
 
     def get_current_consumption(self, ean:str):
         current_year = datetime.now().year
-        date_until = f"{current_year}-12-31T22:59:59.999Z"
+        date_from = f"{current_year - 1}-04-30T23:59:59.999Z"
         periodicity = "TwelveMonths"
 
         if self.mock:
             return self.mock_data[ean]
 
-        return self.get_data(f"https://www.luminus.be/myluminus/api/meter-readings/for/{ean}?dateUntil={date_until}&periodicity={periodicity}")
+        return self.get_data(f"https://www.luminus.be/myluminus/api/meter-readings/for/{ean}?dateFrom={date_until}&periodicity={periodicity}")
 
     def get_advance_and_paid(self) -> list[dict[str, Any]]:
         if self.mock:
