@@ -60,6 +60,21 @@
 	  "singleDay": { 
 		"name": "Single day" 
 	  }
+	  "gas_consumption_kwh": {
+                "name": "Gas consumption kWh"
+          },
+          "electricity_consumption_day_kwh": {
+                "name": "Electricity day consumption"
+          },
+          "electricity_consumption_night_kwh": {
+                "name": "Electricity night consumption"
+          },
+          "electricity_consumption_total_kwh": {
+                "name": "Electricity total consumption"
+          },
+          "estimated_cost": {
+                "name": "Estimated cost"
+          }
 	}
   }
 }
