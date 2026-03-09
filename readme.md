@@ -1,3 +1,6 @@
+# Fork Addition
+- Get current index to give a price estimation.
+
 # My Luminus - Pricing (Unofficial add-on)
 - Get gas and electricity prcing from your active contracts in My Luminus (only for variable or fixed rates).
 - Adds a HA device for each EAN meter.
