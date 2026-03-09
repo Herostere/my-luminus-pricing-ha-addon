@@ -90,9 +90,14 @@ class EnergyPriceSensor(LuminusBaseSensor):
 
 
 class MonetarySensor(LuminusBaseSensor):
+    __attr_has_entity_name = False
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_native_unit_of_measurement = 'EUR'
     _attr_suggested_display_precision = 2
+
+    @property
+    def name(self) -> str:
+        return "Estimated cost"
 
 
 class EnergyConsumptionSensor(LuminusBaseSensor):
