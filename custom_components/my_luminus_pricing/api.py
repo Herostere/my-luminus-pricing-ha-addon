@@ -102,7 +102,7 @@ class API:
 
     def get_meters(self) -> list[dict[str, Any]]:
         if self.mock:
-            return self.mock_data_meters;
+            return self.mock_data_meters
         return self.get_data('https://www.luminus.be/myluminus/api/meter-readings/available-sources')
         
     def get_meter(self, ean: str) -> list[dict[str, Any]]:
@@ -138,6 +138,12 @@ class API:
             return self.mock_data[ean]
 
         return self.get_data(f"https://www.luminus.be/myluminus/api/meter-readings/for/{ean}?dateUntil={date_until}&periodicity={periodicity}")
+
+    def get_advance_and_paid(self) -> list[dict[str, Any]]:
+        if self.mock:
+            return self.mock_data_meters
+        
+        return self.get_data(f"https://www.luminus.be/myluminus/api/budget-billing")
 
     def login(self):
         
