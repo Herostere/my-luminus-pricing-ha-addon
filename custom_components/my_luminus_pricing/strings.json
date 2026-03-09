@@ -59,7 +59,7 @@
 	  },
 	  "singleDay": { 
 		"name": "Single day" 
-	  }
+	  },
 	  "gas_consumption_kwh": {
                 "name": "Gas consumption kWh"
           },
