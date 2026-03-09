@@ -1,6 +1,6 @@
 """DataUpdateCoordinator for our integration."""
 
-from datetime import timedelta
+from datetime import timedelta, datetime
 from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
@@ -67,6 +67,9 @@ class LuminusCoordinator(DataUpdateCoordinator):
             meters = await self.hass.async_add_executor_job(self.api.get_meters)
             data = []
 
+            current_month = datetime.now().month - 5 if datetime.now().month > 4 else datetime.now().month + 7
+            remaining_months = 12 - current_month
+
             for meter in meters['meters']:
                 eanNr = meter['ean']
                 energyType = meter['energyType']
@@ -99,7 +102,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
                         gas_kwh = gas_m3 * GAS_M3_TO_KWH
                         gas_price = device.get("single", 0)
 
-                        device["estimated_cost"] = ((gas_kwh * gas_price) - already_paid) / 12
+                        device["estimated_cost"] = ((gas_kwh * gas_price) - already_paid) / remaining_months
 
                     elif energyType == "Electricity":
                         for detail in period_quantities.get("details", []):
@@ -117,7 +120,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
                         if meterType == "dual":
                             day_price = device.get("dualDay", 0)
                             night_price = device.get("dualNight", 0)
-                            device["estimated_cost"] = ((day_kwh * day_price) + (night_kwh * night_price) - already_paid) / 12
+                            device["estimated_cost"] = ((day_kwh * day_price) + (night_kwh * night_price) - already_paid) / remaining_months
                     
             #await self.hass.async_add_executor_job(self.api.logout)
             _LOGGER.info('Data updated.')
