@@ -11,6 +11,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import DOMAIN, HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from datetime import datetime
 
 from .api import API, APIConnectionError
 from .const import DEFAULT_SCAN_INTERVAL, USE_MOCK_DATA, GAS_M3_TO_KWH
@@ -66,6 +67,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
             await self.hass.async_add_executor_job(self.api.login)
             meters = await self.hass.async_add_executor_job(self.api.get_meters)
             data = []
+            current_month = datetime.now().month
 
             for meter in meters['meters']:
                 eanNr = meter['ean']
@@ -97,7 +99,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
                         gas_kwh = gas_m3 * GAS_M3_TO_KWH
                         gas_price = device.get("single", 0)
 
-                        device["estimated_cost"] = gas_kwh * gas_price
+                        device["estimated_cost"] = (gas_kwh * gas_price) / current_month
 
                     elif energyType == "Electricity":
                         for detail in period_quantities.get("details", []):
