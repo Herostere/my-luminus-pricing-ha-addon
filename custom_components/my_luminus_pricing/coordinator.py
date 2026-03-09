@@ -13,7 +13,7 @@ from homeassistant.core import DOMAIN, HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import API, APIConnectionError
-from .const import DEFAULT_SCAN_INTERVAL, USE_MOCK_DATA
+from .const import DEFAULT_SCAN_INTERVAL, USE_MOCK_DATA, GAS_M3_TO_KWH
 import logging
 
 _LOGGER = logging.getLogger(__name__)
@@ -66,15 +66,21 @@ class LuminusCoordinator(DataUpdateCoordinator):
             await self.hass.async_add_executor_job(self.api.login)
             meters = await self.hass.async_add_executor_job(self.api.get_meters)
             data = []
+
             for meter in meters['meters']:
                 eanNr = meter['ean']
                 energyType = meter['energyType']
                 meterDetails = await self.hass.async_add_executor_job(self.api.get_meter, eanNr)
-                if not meterDetails is None:
+                consumptionDetails = await self.hass.async_add_executor_job(self.api.get_current_consumption, eanNr)
+
+                if meterDetails and consumptionDetails:
                     pname = meterDetails['productName']
                     prices = meterDetails['prices']
                     meterType = meterDetails['activeMeterType']
                     meterPrices = prices[meterType]
+
+                    period_quantities = consumptionDetails.get("periodQuantities", {})
+
                     device = {
                         'device_id': eanNr,
                         'device_name': pname + ' (' + eanNr + ')',
@@ -82,12 +88,45 @@ class LuminusCoordinator(DataUpdateCoordinator):
                         'product_name': pname
                     }
                     data.append(device)
+
                     for propName, price in meterPrices.items():
                         device[propName] = price['rate'] / (1 if propName == 'fixed' else 100)
+
+                    if energyType == "Gas":
+                        gas_m3 = period_quantities.get("offtake", 0)
+                        gas_kwh = gas_m3 * GAS_M3_TO_KWH
+                        gas_price = device.get("single", 0)
+
+                        device["estimated_cost"] = gas_kwh * gas_price
+
+                    elif energyType == "Electricity":
+                        for detail in period_quantities.get("details", []):
+                            if detail.get("direction") != "Offtake":
+                                continue
+
+                            if detail.get("timeFrame") == "Day":
+                                day_kwh = detail.get("quantity", 0)
+                            elif detail.get("timeFrame") == "Night":
+                                night_kwh = detail.get("quantity", 0)
+                            # elif detail.get("timeFrame") == "TotalHours":
+                            #   day_kwh = detail.get("quantity", 0)
+
+                        device["electricity_consumption_day_kwh"] = day_kwh
+                        device["electricity_consumption_night_kwh"] = night_kwh
+                        # device["electricity_consumption_total_kwh"] = day_kwh + night_kwh
+
+                        if meterType == "dual":
+                            day_price = device.get("dualDay", 0)
+                            night_price = device.get("dualNight", 0)
+                            device["estimated_cost"] = (day_kwh * day_price) + (night_kwh * night_price)
+                        # else:
+                        #    single_price = device.get("single", 0)
+                        #    device["estimated_cost"] = (day_kwh + night_kwh) * single_price
                     
             #await self.hass.async_add_executor_job(self.api.logout)
             _LOGGER.info('Data updated.')
             #_LOGGER.warning('updated coordinator data', data)  
+
         except APIConnectionError as err:
             _LOGGER.error(err)
             raise UpdateFailed(err) from err
