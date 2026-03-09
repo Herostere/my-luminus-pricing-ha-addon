@@ -48,7 +48,18 @@ async def async_setup_entry(
             if(propName in skipProps):
                 continue
             
-            sensorType = YearlyPriceSensor if propName == 'fixed' else EnergyPriceSensor
+            # sensorType = YearlyPriceSensor if propName == 'fixed' else EnergyPriceSensor
+            # sensors.append(sensorType(coordinator, device, propName))
+
+            if propName == 'fixed':
+                sensorType = YearlyPriceSensor
+            elif propName in ['estimated_cost']:
+                sensorType = MonetarySensor
+            elif propName in ['electricity_consumption_day_kwh', 'electricity_consumption_night_kwh', 'electricity_consumption_total_kwh']:
+                sensorType = EnergyConsumptionSensor
+            else:
+                sensorType = EnergyPriceSensor
+
             sensors.append(sensorType(coordinator, device, propName))
 
     # Now create the sensors.
@@ -80,3 +91,15 @@ class EnergyPriceSensor(LuminusBaseSensor):
     _attr_native_unit_of_measurement = 'EUR/kWh'
     _attr_suggested_display_precision = 4
 
+
+class MonetarySensor(LuminusBaseSensor):
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = 'EUR'
+    _attr_suggested_display_precision = 2
+
+
+class EnergyConsumptionSensor(LuminusBaseSensor):
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = 'kWh'
+    _attr_suggested_display_precision = 2
+    _attr_state_class = SensorStateClass.MEASUREMENT
