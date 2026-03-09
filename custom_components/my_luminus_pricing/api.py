@@ -131,7 +131,9 @@ class API:
 
     def get_current_consumption(self, ean:str):
         current_year = datetime.now().year
-        date_from = f"{current_year - 1}-04-30T23:59:59.999Z"
+        current_month = datetime.now().month
+        url_year = current_year - 1 if month < 5 else current_year
+        date_from = f"{url_year}-04-30T23:59:59.999Z"
         periodicity = "TwelveMonths"
 
         if self.mock:
