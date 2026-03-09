@@ -67,7 +67,6 @@ async def async_setup_entry(
 
 
 class LuminusBaseSensor(LuminusBaseEntity, SensorEntity):
-
     @property
     def native_value(self) -> int | float:
         """Return the state of the entity."""
@@ -79,14 +78,12 @@ class LuminusBaseSensor(LuminusBaseEntity, SensorEntity):
 
 
 class YearlyPriceSensor(LuminusBaseSensor):
-
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_native_unit_of_measurement = 'EUR/year'
     _attr_suggested_display_precision = 2
 
 
 class EnergyPriceSensor(LuminusBaseSensor):
-
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_native_unit_of_measurement = 'EUR/kWh'
     _attr_suggested_display_precision = 4
