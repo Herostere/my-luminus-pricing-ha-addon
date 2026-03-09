@@ -10,6 +10,7 @@ from copy import deepcopy
 from typing import Any
 from urllib.parse import urlparse, parse_qs
 from .const import HTTP_TIMEOUT
+from datetime import datetime
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -122,11 +123,22 @@ class API:
                 self.isLoggedIn = False
                 raise APIConnectionError("Error connecting to api")
             return r.json()
+
         except requests.exceptions.ConnectTimeout as err:
             raise APIConnectionError("Timeout connecting to api") from err
         except Exception as err:
             raise APIConnectionError(err)
-        
+
+    def get_current_consumption(self, ean:str):
+        current_year = datetime.now().year
+        date_until = f"{current_year}-12-31T22:59:59.999Z"
+        periodicity = "TwelveMonths"
+
+        if self.mock:
+            return self.mock_data[ean]
+
+        return self.get_data(f"https://www.luminus.be/myluminus/api/meter-readings/for/{ean}?dateUntil={date_until}&periodicity={periodicity}")
+
     def login(self):
         
         if self.mock or self.isLoggedIn:
