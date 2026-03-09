@@ -11,7 +11,6 @@ from homeassistant.const import (
 )
 from homeassistant.core import DOMAIN, HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from datetime import datetime
 
 from .api import API, APIConnectionError
 from .const import DEFAULT_SCAN_INTERVAL, USE_MOCK_DATA, GAS_M3_TO_KWH
@@ -67,20 +66,21 @@ class LuminusCoordinator(DataUpdateCoordinator):
             await self.hass.async_add_executor_job(self.api.login)
             meters = await self.hass.async_add_executor_job(self.api.get_meters)
             data = []
-            current_month = datetime.now().month
 
             for meter in meters['meters']:
                 eanNr = meter['ean']
                 energyType = meter['energyType']
                 meterDetails = await self.hass.async_add_executor_job(self.api.get_meter, eanNr)
                 consumptionDetails = await self.hass.async_add_executor_job(self.api.get_current_consumption, eanNr)
+                budgetDetails = await self.hass.async_add_executor_job(self.api.get_advance_and_paid)
 
-                if meterDetails and consumptionDetails:
+                if meterDetails and consumptionDetails and budgetDetails:
                     pname = meterDetails['productName']
                     prices = meterDetails['prices']
                     meterType = meterDetails['activeMeterType']
                     meterPrices = prices[meterType]
-
+                    budget_billing = budgetDetails[0] if budgetDetails[0].get["ean"] == eanNr else budgetDetails[1]
+                    already_paid = budget_billing.get("simulation").get("totalPaidAmount")
                     period_quantities = consumptionDetails.get("periodQuantities", {})
 
                     device = {
@@ -99,7 +99,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
                         gas_kwh = gas_m3 * GAS_M3_TO_KWH
                         gas_price = device.get("single", 0)
 
-                        device["estimated_cost"] = (gas_kwh * gas_price) / current_month
+                        device["estimated_cost"] = ((gas_kwh * gas_price) - already_paid) / 12
 
                     elif energyType == "Electricity":
                         for detail in period_quantities.get("details", []):
@@ -110,20 +110,14 @@ class LuminusCoordinator(DataUpdateCoordinator):
                                 day_kwh = detail.get("quantity", 0)
                             elif detail.get("timeFrame") == "Night":
                                 night_kwh = detail.get("quantity", 0)
-                            # elif detail.get("timeFrame") == "TotalHours":
-                            #   day_kwh = detail.get("quantity", 0)
 
                         device["electricity_consumption_day_kwh"] = day_kwh
                         device["electricity_consumption_night_kwh"] = night_kwh
-                        # device["electricity_consumption_total_kwh"] = day_kwh + night_kwh
 
                         if meterType == "dual":
                             day_price = device.get("dualDay", 0)
                             night_price = device.get("dualNight", 0)
-                            device["estimated_cost"] = (day_kwh * day_price) + (night_kwh * night_price)
-                        # else:
-                        #    single_price = device.get("single", 0)
-                        #    device["estimated_cost"] = (day_kwh + night_kwh) * single_price
+                            device["estimated_cost"] = ((day_kwh * day_price) + (night_kwh * night_price) - already_paid) / 12
                     
             #await self.hass.async_add_executor_job(self.api.logout)
             _LOGGER.info('Data updated.')
