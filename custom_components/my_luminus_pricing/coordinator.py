@@ -80,7 +80,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
                 if meterDetails and consumptionDetails and budgetDetails:
                     pname = meterDetails['productName']
                     prices = meterDetails['prices']
-                    meterType = meterDetails['activeMeterType']
+                    meterType = "dual" if "dual" in prices else meterDetails['activeMeterType']
                     meterPrices = prices[meterType]
                     budget_billing = budgetDetails[0] if budgetDetails[0].get("ean") == eanNr else budgetDetails[1]
                     already_paid = budget_billing.get("simulation").get("totalPaidAmount")
@@ -105,6 +105,9 @@ class LuminusCoordinator(DataUpdateCoordinator):
                         device["estimated_cost"] = ((gas_kwh * gas_price) - already_paid) / remaining_months
 
                     elif energyType == "Electricity":
+                        day_kwh = 0
+                        night_kwh = 0
+
                         for detail in period_quantities.get("details", []):
                             if detail.get("direction") != "Offtake":
                                 continue
@@ -117,10 +120,13 @@ class LuminusCoordinator(DataUpdateCoordinator):
                         device["electricity_consumption_day_kwh"] = day_kwh
                         device["electricity_consumption_night_kwh"] = night_kwh
 
+                        day_price = 0
+                        night_price = 0
                         if meterType == "dual":
                             day_price = device.get("dualDay", 0)
                             night_price = device.get("dualNight", 0)
-                            device["estimated_cost"] = ((day_kwh * day_price) + (night_kwh * night_price) - already_paid) / remaining_months
+                            
+                        device["estimated_cost"] = ((day_kwh * day_price) + (night_kwh * night_price) - already_paid) / remaining_months
                     
             #await self.hass.async_add_executor_job(self.api.logout)
             _LOGGER.info('Data updated.')

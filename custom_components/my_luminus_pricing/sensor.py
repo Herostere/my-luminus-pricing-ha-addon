@@ -56,7 +56,8 @@ async def async_setup_entry(
             elif propName in ['estimated_cost']:
                 sensorType = MonetarySensor
             elif propName in ['electricity_consumption_day_kwh', 'electricity_consumption_night_kwh', 'electricity_consumption_total_kwh']:
-                sensorType = EnergyConsumptionSensor
+                continue
+                # sensorType = EnergyConsumptionSensor
             else:
                 sensorType = EnergyPriceSensor
 
