@@ -18,6 +18,7 @@ import logging
 
 _LOGGER = logging.getLogger(__name__)
 
+
 class LuminusCoordinator(DataUpdateCoordinator):
     """My example coordinator."""
 
@@ -51,6 +52,38 @@ class LuminusCoordinator(DataUpdateCoordinator):
         # Initialise your api here and make available to your integration.
         self.api = API(user=self.user, pwd=self.pwd, mock=USE_MOCK_DATA)
 
+    def _get_month_weight(self, month: int, energy: str) -> float:
+        """Return seasonal weight for a given month."""
+        if month in (12, 1, 2):        # Winter
+            if energy == "gas":
+                return 2.0
+            return 1.4
+        elif month in (9, 10, 11):  # Autumn
+            if energy == "gas":
+                return 1.3
+            return 1.1
+        elif month in (3, 4, 5):    # Spring
+            if energy == "gas":
+                return 1.1
+            return 1.0
+
+        return 1.0                     # Summer
+
+    def _forecast_remaining_cost(self, cost_so_far: float, current_month: int, remaining_months: int, energy: str) -> float:
+        """Forecast remaining cost until next April using seasonal weights."""
+        if current_month <= 0 or remaining_months <= 0:
+            return 0
+
+        average_monthly_cost = cost_so_far / current_month
+        forecast = 0
+
+        month_number = current_month
+        for offset in range(remaining_months):
+            forecast += average_monthly_cost * self._get_month_weight(month_number, energy)
+            month_number += 1
+
+        return forecast
+
     async def async_update_data(self):
         """Fetch data from API endpoint.
 
@@ -69,6 +102,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
 
             current_month = datetime.now().month - 5 if datetime.now().month > 4 else datetime.now().month + 7
             remaining_months = 12 - current_month
+            current_month = datetime.now().month - 3 if datetime.now().month > 3 else datetime.now().month + 9
 
             for meter in meters['meters']:
                 eanNr = meter['ean']
@@ -102,7 +136,12 @@ class LuminusCoordinator(DataUpdateCoordinator):
                         gas_kwh = gas_m3 * GAS_M3_TO_KWH
                         gas_price = device.get("single", 0)
 
-                        device["estimated_cost"] = ((gas_kwh * gas_price) - already_paid) / remaining_months
+                        cost_so_far = gas_kwh * gas_price
+                        forecast_remaining = self._forecast_remaining_cost(cost_so_far, current_month, remaining_months, "gas")
+                        projected_total = cost_so_far + forecast_remaining
+
+                        device["estimated_cost"] = (projected_total - already_paid) / remaining_months 
+                        # device["estimated_cost"] = ((gas_kwh * gas_price) - already_paid) / remaining_months
 
                     elif energyType == "Electricity":
                         day_kwh = 0
@@ -126,7 +165,12 @@ class LuminusCoordinator(DataUpdateCoordinator):
                             day_price = device.get("dualDay", 0)
                             night_price = device.get("dualNight", 0)
                             
-                        device["estimated_cost"] = ((day_kwh * day_price) + (night_kwh * night_price) - already_paid) / remaining_months
+                        cost_so_far = (day_kwh * day_price) + (night_kwh * night_price)
+                        forecast_remaining = self._forecast_remaining_cost(cost_so_far, current_month, remaining_months, "electricity")
+                        projected_total = cost_so_far + forecast_remaining
+
+                        device["estimated_cost"] = (projected_total - already_paid) / remaining_months    
+                        # device["estimated_cost"] = ((day_kwh * day_price) + (night_kwh * night_price) - already_paid) / remaining_months
                     
             #await self.hass.async_add_executor_job(self.api.logout)
             _LOGGER.info('Data updated.')
