@@ -100,9 +100,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
             meters = await self.hass.async_add_executor_job(self.api.get_meters)
             data = []
 
-            current_month = datetime.now().month - 5 if datetime.now().month > 4 else datetime.now().month + 7
-            remaining_months = 12 - current_month
-            current_month = datetime.now().month - 3 if datetime.now().month > 3 else datetime.now().month + 9
+            current_month = ((datetime.now().month - 5) % 12) + 1
 
             for meter in meters['meters']:
                 eanNr = meter['ean']
@@ -117,6 +115,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
                     meterType = "dual" if "dual" in prices else meterDetails['activeMeterType']
                     meterPrices = prices[meterType]
                     budget_billing = budgetDetails[0] if budgetDetails[0].get("ean") == eanNr else budgetDetails[1]
+                    remaining_months = budget_billing.get("simulation").get("openAdvancesCount")
                     already_paid = budget_billing.get("simulation").get("totalPaidAmount")
                     period_quantities = consumptionDetails.get("periodQuantities", {})
 
