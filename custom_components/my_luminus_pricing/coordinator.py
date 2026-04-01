@@ -142,6 +142,9 @@ class LuminusCoordinator(DataUpdateCoordinator):
                         device["estimated_cost"] = (projected_total - already_paid) / remaining_months 
                         # device["estimated_cost"] = ((gas_kwh * gas_price) - already_paid) / remaining_months
 
+                        _LOGGER.warning("Gas debug ean=%s gas_m3=%s gas_kwh=%s gas_price=%s already_paid=%s remaining_months=%s current_month=%s", eanNr, gas_m3, gas_kwh, gas_price, already_paid, remaining_months, current_month,)
+                        _LOGGER.warning("Forecast debug cost_so_far=%s forecast_remaining=%s projected_total=%s estimated=%s", cost_so_far, forecast_remaining, projected_total, (projected_total - already_paid) / remaining_months if remaining_months else None,)
+
                     elif energyType == "Electricity":
                         day_kwh = 0
                         night_kwh = 0
