@@ -115,8 +115,11 @@ class LuminusCoordinator(DataUpdateCoordinator):
                     meterType = "dual" if "dual" in prices else meterDetails['activeMeterType']
                     meterPrices = prices[meterType]
                     budget_billing = budgetDetails[0] if budgetDetails[0].get("ean") == eanNr else budgetDetails[1]
-                    remaining_months = budget_billing.get("simulation").get("openAdvancesCount")
-                    already_paid = budget_billing.get("simulation").get("totalPaidAmount")
+
+                    # This can cause issues when the final bill is due. Adding "or" to fix that.
+                    remaining_months = (budget_billing.get("simulation") or {}).get("openAdvancesCount") or 1
+                    already_paid = (budget_billing.get("simulation")or {}).get("totalPaidAmount") or 0
+
                     period_quantities = consumptionDetails.get("periodQuantities", {})
 
                     device = {
@@ -141,7 +144,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
 
                         device["estimated_cost"] = (projected_total - already_paid) / remaining_months 
                         # device["estimated_cost"] = ((gas_kwh * gas_price) - already_paid) / remaining_months
-
+                        
                         _LOGGER.warning("Gas debug ean=%s gas_m3=%s gas_kwh=%s gas_price=%s already_paid=%s remaining_months=%s current_month=%s", eanNr, gas_m3, gas_kwh, gas_price, already_paid, remaining_months, current_month,)
                         _LOGGER.warning("Forecast debug cost_so_far=%s forecast_remaining=%s projected_total=%s estimated=%s", cost_so_far, forecast_remaining, projected_total, (projected_total - already_paid) / remaining_months if remaining_months else None,)
 
