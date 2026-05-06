@@ -119,6 +119,8 @@ class LuminusCoordinator(DataUpdateCoordinator):
                     # This can cause issues when the final bill is due. Adding "or" to fix that.
                     remaining_months = (budget_billing.get("simulation") or {}).get("openAdvancesCount") or 1
                     already_paid = (budget_billing.get("simulation")or {}).get("totalPaidAmount") or 0
+                    # TODO save already_paid in a file. If value = 0, maybe it is best to take the value from the file. 
+                    # The issue is that we can't get the "already paid" value when My Luminus is not allowing to adjust what we pay.
 
                     period_quantities = consumptionDetails.get("periodQuantities", {})
 
