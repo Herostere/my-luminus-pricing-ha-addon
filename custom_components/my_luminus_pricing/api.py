@@ -6,6 +6,7 @@ https://3.python-requests.org/user/advanced/
 
 import logging
 import requests
+import time
 from copy import deepcopy
 from typing import Any
 from urllib.parse import urlparse, parse_qs
@@ -175,23 +176,23 @@ class API:
     def get_data(self, url: str) -> list[dict[str, Any]]:
         while True:
             try:
-                r = self.session.get(url, timeout=HTTP_TIMEOUT, allow_redirects=False)
+                if self.isLoggedIn:
+                    r = self.session.get(url, timeout=HTTP_TIMEOUT, allow_redirects=False)
 
-                if r.status_code == requests.codes.forbidden:
-                    _LOGGER.warning("Luminus returned 403, resetting session and logging in again.")
+                    if r.status_code != requests.codes.ok:
+                        _LOGGER.warning("Luminus response error", r.url, r.status_code, r.text)
+                        self.reset_session()
+                        self.login()
+                        continue
+                    else:
+                        return r.json()
+                else:
                     self.reset_session()
                     self.login()
-                    r = self.session.get(url, timeout=HTTP_TIMEOUT, allow_redirects=False)
-                    
-                if r.status_code != requests.codes.ok:
-                    _LOGGER.warning("Luminus response error", r.url, r.status_code, r.text)
-                    self.isLoggedIn = False
-                return r.json()
 
-            except requests.exceptions.ConnectTimeout as err:
-                _LOGGER.warning("Timeout connecting to the api.")
             except Exception as err:
-                raise APIConnectionError(err)
+                _LOGGER.warning("Error within get_data()")
+                time.sleep(15)
 
 
     def get_current_consumption(self, ean:str):
