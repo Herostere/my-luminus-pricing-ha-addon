@@ -1,5 +1,12 @@
 # Fork Addition
-- Get current index to give a price estimation.
+This fork provides a forecast estimation for gas and electricity prices based on data from My Luminus. The estimated values are displayed directly in Home Assistant, making it easier to monitor expected energy costs and follow price trends from within the dashboard.
+The integration also includes improved session management. This helps keep the connection with My Luminus more reliable and avoids the need to manually reload the integration when the session becomes invalid.
+
+<img width="488" height="273" alt="image" src="https://github.com/user-attachments/assets/e96d9deb-d749-4d9e-9092-85e4810266b3" />
+
+<img width="491" height="407" alt="image" src="https://github.com/user-attachments/assets/4863ce63-a9b7-4218-8268-4d34876fe33c" />
+
+
 
 # My Luminus - Pricing (Unofficial add-on)
 - Get gas and electricity prcing from your active contracts in My Luminus (only for variable or fixed rates).
