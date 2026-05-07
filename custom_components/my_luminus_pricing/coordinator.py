@@ -13,7 +13,7 @@ from homeassistant.core import DOMAIN, HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import API
-from .const import DEFAULT_SCAN_INTERVAL, USE_MOCK_DATA, GAS_M3_TO_KWH
+from .const import DEFAULT_SCAN_INTERVAL, GAS_M3_TO_KWH
 import logging
 
 _LOGGER = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
         )
 
         # Initialise your api here and make available to your integration.
-        self.api = API(user=self.user, pwd=self.pwd, mock=USE_MOCK_DATA)
+        self.api = API(user=self.user, pwd=self.pwd)
 
     def _get_month_weight(self, month: int, energy: str) -> float:
         """Return seasonal weight for a given month."""

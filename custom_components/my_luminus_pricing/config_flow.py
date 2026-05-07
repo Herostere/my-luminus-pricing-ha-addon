@@ -25,7 +25,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.selector import selector
 
 from .api import API
-from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, MIN_SCAN_INTERVAL, USE_MOCK_DATA
+from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, MIN_SCAN_INTERVAL
 import logging
 import voluptuous as vol
 #from .coordinator import ExampleCoordinator
@@ -53,7 +53,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         # If you cannot connect, raise CannotConnect
         # If the authentication is wrong, raise InvalidAuth
         # ----------------------------------------------------------------------------
-        api = API(data[CONF_USERNAME], data[CONF_PASSWORD], mock=USE_MOCK_DATA)
+        api = API(data[CONF_USERNAME], data[CONF_PASSWORD])
         await hass.async_add_executor_job(api.login)
     except Exception as e:
         raise e("Error in config_flow.py/validate_input()")

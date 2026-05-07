@@ -100,14 +100,10 @@ class API:
 
 
     def get_meters(self) -> list[dict[str, Any]]:
-        if self.mock:
-            return self.mock_data_meters
         return self.get_data('https://www.luminus.be/myluminus/api/meter-readings/available-sources')
         
 
     def get_meter(self, ean: str) -> dict[str, Any]:
-        if self.mock:
-            return self.mock_data[ean]
         return self.get_data(f"https://www.luminus.be/myluminus/api/price-information/{ean}")
         
 
@@ -141,23 +137,17 @@ class API:
         date_from = f"{url_year}-04-30T23:59:59.999Z"
         periodicity = "TwelveMonths"
 
-        if self.mock:
-            return self.mock_data[ean]
-
         return self.get_data(f"https://www.luminus.be/myluminus/api/meter-readings/for/{ean}?dateFrom={date_from}&periodicity={periodicity}")
 
 
-    def get_advance_and_paid(self) -> list[dict[str, Any]]:
-        if self.mock:
-            return self.mock_data_meters
-        
+    def get_advance_and_paid(self) -> list[dict[str, Any]]:        
         return self.get_data(f"https://www.luminus.be/myluminus/api/budget-billing")
 
 
     def logout(self):
-
-        if self.mock or not self.isLoggedIn:
+        if not self.isLoggedIn:
             return
+            
         try:
             _LOGGER.warning("Logout LUMINUS")
             r = self.session.get(f"https://www.luminus.be/myluminus/api/auth/logout", timeout=HTTP_TIMEOUT)
