@@ -24,7 +24,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.selector import selector
 
-from .api import API, APIAuthError, APIConnectionError
+from .api import API
 from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, MIN_SCAN_INTERVAL, USE_MOCK_DATA
 import logging
 import voluptuous as vol
@@ -55,10 +55,8 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         # ----------------------------------------------------------------------------
         api = API(data[CONF_USERNAME], data[CONF_PASSWORD], mock=USE_MOCK_DATA)
         await hass.async_add_executor_job(api.login)
-    except APIAuthError as err:
-        raise InvalidAuth from err
-    except APIConnectionError as err:
-        raise CannotConnect from err
+    except Exception as e:
+        raise e("Error in config_flow.py/validate_input()")
     return {"title": f"Luminus - {data[CONF_USERNAME]}"}
 
 
