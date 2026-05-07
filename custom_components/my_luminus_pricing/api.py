@@ -92,15 +92,16 @@ class API:
             }
 
             authReq = self.session.post('https://login.luminus.be/u/login/password', params=authUriQry, data=authReqBody, timeout=30, headers=authHeaders)       
-            self.isLoggedIn = authReq.status_code == requests.codes.ok
             
             if authReq.status_code != requests.codes.ok:
                 _LOGGER.warning(f'Login 2 status code: {authReq.status_code}')
                 time.sleep(15)
                 continue
-            else:
+            
+            self.isLoggedIn = authReq.status_code == requests.codes.ok
+            if isLoggedIn:
                 break
-                
+
             _LOGGER.info('Luminus logged in!')
 
 
