@@ -89,64 +89,26 @@ defHeaders = {
 }
 
 class API:
+
+    def _create_session(self):
+        self.session = requests.Session()
+        self.session.headers.update(defHeaders)
     
     def __init__(self, user: str, pwd: str, mock: bool = False) -> None:
         self.user = user
         self.pwd = pwd
-        self.session = requests.Session()
-        self.session.headers.update(defHeaders)
+        self._create_session()
         self.mock = mock
         self.mock_data = deepcopy(MOCK_DATA)
         self.mock_data_meters = deepcopy(MOCK_DATA_METERS)        
-        self.isLoggedIn = False        
+        self.isLoggedIn = False       
 
-    def get_meters(self) -> list[dict[str, Any]]:
-        if self.mock:
-            return self.mock_data_meters
-        return self.get_data('https://www.luminus.be/myluminus/api/meter-readings/available-sources')
-        
-    def get_meter(self, ean: str) -> dict[str, Any]:
-        if self.mock:
-            return self.mock_data[ean]
-        return self.get_data(f"https://www.luminus.be/myluminus/api/price-information/{ean}")
-        
-    def get_data(self, url: str) -> list[dict[str, Any]]:
-        try:
-            r = self.session.get(url, timeout=HTTP_TIMEOUT, allow_redirects=False)
-            if(r.status_code == requests.codes.forbidden):
-                self.isLoggedIn = False
-                self.login()
-                r = self.session.get(url, timeout=HTTP_TIMEOUT, allow_redirects=False)
-                
-            if(r.status_code != requests.codes.ok):
-                _LOGGER.warning("Luminus response error", r.url, r.status_code, r.text)
-                self.isLoggedIn = False
-                raise APIConnectionError("Error connecting to api")
-            return r.json()
 
-        except requests.exceptions.ConnectTimeout as err:
-            raise APIConnectionError("Timeout connecting to api") from err
-        except Exception as err:
-            raise APIConnectionError(err)
+    def reset_session(self):
+        self.session.close()
+        self._create_session()
+        self.isLoggedIn = False 
 
-    def get_current_consumption(self, ean:str):
-        current_year = datetime.now().year
-        current_month = datetime.now().month
-        current_day = datetime.now().day
-        url_year = current_year - 1 if (current_month < 5 or (current_month == 5 and current_day < 16)) else current_year
-        date_from = f"{url_year}-04-30T23:59:59.999Z"
-        periodicity = "TwelveMonths"
-
-        if self.mock:
-            return self.mock_data[ean]
-
-        return self.get_data(f"https://www.luminus.be/myluminus/api/meter-readings/for/{ean}?dateFrom={date_from}&periodicity={periodicity}")
-
-    def get_advance_and_paid(self) -> list[dict[str, Any]]:
-        if self.mock:
-            return self.mock_data_meters
-        
-        return self.get_data(f"https://www.luminus.be/myluminus/api/budget-billing")
 
     def login(self):
         
@@ -175,7 +137,8 @@ class API:
             'action': 'default' 
         }
         idReq = self.session.post('https://login.luminus.be/u/login/identifier', params=authUriQry, data=idReqBody, timeout=30, headers=idHeaders)
-        if(idReq.status_code != requests.codes.ok):
+        
+        if idReq.status_code != requests.codes.ok:
             raise APIAuthError()
             
         authHeaders = { 
@@ -190,10 +153,67 @@ class API:
         }
         authReq = self.session.post('https://login.luminus.be/u/login/password', params=authUriQry, data=authReqBody, timeout=30, headers=authHeaders)       
         self.isLoggedIn = authReq.status_code == requests.codes.ok
-        if(authReq.status_code != requests.codes.ok):
+        
+        if authReq.status_code != requests.codes.ok:
             raise APIAuthError()
             
         _LOGGER.info('Luminus logged in!')
+
+
+    def get_meters(self) -> list[dict[str, Any]]:
+        if self.mock:
+            return self.mock_data_meters
+        return self.get_data('https://www.luminus.be/myluminus/api/meter-readings/available-sources')
+        
+
+    def get_meter(self, ean: str) -> dict[str, Any]:
+        if self.mock:
+            return self.mock_data[ean]
+        return self.get_data(f"https://www.luminus.be/myluminus/api/price-information/{ean}")
+        
+
+    def get_data(self, url: str) -> list[dict[str, Any]]:
+        while True:
+            try:
+                r = self.session.get(url, timeout=HTTP_TIMEOUT, allow_redirects=False)
+
+                if r.status_code == requests.codes.forbidden:
+                    _LOGGER.warning("Luminus returned 403, resetting session and logging in again.")
+                    self.reset_session()
+                    self.login()
+                    r = self.session.get(url, timeout=HTTP_TIMEOUT, allow_redirects=False)
+                    
+                if r.status_code != requests.codes.ok:
+                    _LOGGER.warning("Luminus response error", r.url, r.status_code, r.text)
+                    self.isLoggedIn = False
+                return r.json()
+
+            except requests.exceptions.ConnectTimeout as err:
+                _LOGGER.warning("Timeout connecting to the api.")
+            except Exception as err:
+                raise APIConnectionError(err)
+
+
+    def get_current_consumption(self, ean:str):
+        current_year = datetime.now().year
+        current_month = datetime.now().month
+        current_day = datetime.now().day
+        url_year = current_year - 1 if (current_month < 5 or (current_month == 5 and current_day < 16)) else current_year
+        date_from = f"{url_year}-04-30T23:59:59.999Z"
+        periodicity = "TwelveMonths"
+
+        if self.mock:
+            return self.mock_data[ean]
+
+        return self.get_data(f"https://www.luminus.be/myluminus/api/meter-readings/for/{ean}?dateFrom={date_from}&periodicity={periodicity}")
+
+
+    def get_advance_and_paid(self) -> list[dict[str, Any]]:
+        if self.mock:
+            return self.mock_data_meters
+        
+        return self.get_data(f"https://www.luminus.be/myluminus/api/budget-billing")
+
 
     def logout(self):
 
@@ -204,13 +224,6 @@ class API:
             r = self.session.get(f"https://www.luminus.be/myluminus/api/auth/logout", timeout=HTTP_TIMEOUT)
             self.isLoggedIn = False
             return r.json()
-        except requests.exceptions.ConnectTimeout as err:
-            raise APIConnectionError("Timeout connecting to api") from err
+        except requests.exceptions.ConnectTimeout as e:
+            _LOGGER.warning("Error logging out.")
 
-
-class APIAuthError(Exception):
-    """Exception class for auth error."""
-
-
-class APIConnectionError(Exception):
-    """Exception class for connection error."""
