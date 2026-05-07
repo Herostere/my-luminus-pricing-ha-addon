@@ -49,7 +49,7 @@ class API:
 
     def login(self):     
         if self.isLoggedIn:
-            reset_session(self)
+            reset_session()
 
         while True:    
             _LOGGER.warning('Luminus Login called!')
