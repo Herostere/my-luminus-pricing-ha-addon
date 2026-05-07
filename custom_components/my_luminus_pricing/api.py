@@ -33,6 +33,7 @@ class API:
         self.session = requests.Session()
         self.session.headers.update(defHeaders)
     
+
     def __init__(self, user: str, pwd: str) -> None:
         self.user = user
         self.pwd = pwd
@@ -48,10 +49,10 @@ class API:
 
     def login(self):     
         if self.isLoggedIn:
-            return
+            reset_session(self)
 
         while True:    
-            _LOGGER.debug('Luminus Login called!')
+            _LOGGER.warning('Luminus Login called!')
             r = self.session.get(f"https://www.luminus.be/myluminus/nl/", timeout=30)
             u = urlparse(r.history[-1].headers['location'])
             q = parse_qs(u.query)
@@ -74,6 +75,7 @@ class API:
             idReq = self.session.post('https://login.luminus.be/u/login/identifier', params=authUriQry, data=idReqBody, timeout=30, headers=idHeaders)
             
             if idReq.status_code != requests.codes.ok:
+                _LOGGER.warning(f'Login 1 status code: {idReq.status_code}')
                 time.sleep(15)
                 continue
                 
@@ -93,8 +95,11 @@ class API:
             self.isLoggedIn = authReq.status_code == requests.codes.ok
             
             if authReq.status_code != requests.codes.ok:
+                _LOGGER.warning(f'Login 2 status code: {authReq.status_code}')
                 time.sleep(15)
                 continue
+            else:
+                break
                 
             _LOGGER.info('Luminus logged in!')
 
@@ -147,7 +152,7 @@ class API:
     def logout(self):
         if not self.isLoggedIn:
             return
-            
+
         try:
             _LOGGER.warning("Logout LUMINUS")
             r = self.session.get(f"https://www.luminus.be/myluminus/api/auth/logout", timeout=HTTP_TIMEOUT)
