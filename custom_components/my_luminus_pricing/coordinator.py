@@ -12,7 +12,7 @@ from homeassistant.const import (
 from homeassistant.core import DOMAIN, HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import API, APIConnectionError
+from .api import API
 from .const import DEFAULT_SCAN_INTERVAL, USE_MOCK_DATA, GAS_M3_TO_KWH
 import logging
 
@@ -183,9 +183,6 @@ class LuminusCoordinator(DataUpdateCoordinator):
             _LOGGER.info('Data updated.')
             #_LOGGER.warning('updated coordinator data', data)  
 
-        except APIConnectionError as err:
-            _LOGGER.error(err)
-            raise UpdateFailed(err) from err
         except Exception as err:
             # This will show entities as unavailable by raising UpdateFailed exception
             raise UpdateFailed(f"Error communicating with API: {err}") from err

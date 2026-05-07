@@ -13,70 +13,8 @@ from urllib.parse import urlparse, parse_qs
 from .const import HTTP_TIMEOUT
 from datetime import datetime
 
+
 _LOGGER = logging.getLogger(__name__)
-
-MOCK_EAN_ELECTRICITY = "000000000123456789"
-MOCK_EAN_GAS = "123456789000000000"
-
-MOCK_DATA_METERS = {
-    'meters': [{
-            'ean': MOCK_EAN_ELECTRICITY, 
-            'energyType': 'Electricity', 
-            'sources': [{'sourceProvider': 'SAP'}, {'sourceProvider': 'BasicMonitoring', 'status': 'Eligible'}]
-        }, {
-            'ean': MOCK_EAN_GAS, 
-            'energyType': 'Gas', 
-            'sources': [{'sourceProvider': 'SAP'}, {'sourceProvider': 'BasicMonitoring', 'status': 'Eligible'}]
-        }
-    ]
-}
-
-MOCK_DATA = {
-    MOCK_EAN_ELECTRICITY: {
-        "productName":"Luminus Elektriciteit",
-        "disclaimer":"De vermelde prijzen en eventuele promoties zijn incl. 6% BTW, de tariefformules zijn exclusief btw. ...de prijzen en promoties.",
-        "activeMeterType":"dual",
-        "prices":{
-            "single":{
-                "fixed":{"rate":25},
-                "single":{"rate":9.31,"formula":"0.0010881 x Belpex RLP M [67.52] + 0.014342"},
-                "injectionSingle":{"rate":2.62,"formula":"0.0006444 x Belpex M INJ [65.33] - 0.0159"}
-            },
-            "dual":{
-                "fixed":{"rate":25},
-                "dualDay":{"rate":10.93,"formula":"0.001261 x Belpex RLP M [67.52] + 0.0179388"},
-                "dualNight":{"rate":7.99,"formula":"0.000943 x Belpex RLP M [67.52] + 0.0116652"},
-                "injectionDualDay":{"rate":3.6,"formula":"0.0007944 x Belpex M INJ [65.33] - 0.0159"},
-                "injectionDualNight":{"rate":1.12,"formula":"0.0004144 x Belpex M INJ [65.33] - 0.0159"}
-            },
-            "singleExclusiveNight":{
-                "fixed":{"rate":25},
-                "single":{"rate":9.31,"formula":"0.0010881 x Belpex RLP M [67.52] + 0.014342"},
-                "exclusiveNight":{"rate":7.99,"formula":"0.000943 x Belpex RLP M [67.52] + 0.0116652"},
-                "injectionSingle":{"rate":2.62,"formula":"0.0006444 x Belpex M INJ [65.33] - 0.0159"}
-            },
-            "dualExclusiveNight":{
-                "fixed":{"rate":25},
-                "dualDay":{"rate":10.93,"formula":"0.001261 x Belpex RLP M [67.52] + 0.0179388"},
-                "dualNight":{"rate":7.99,"formula":"0.000943 x Belpex RLP M [67.52] + 0.0116652"},
-                "exclusiveNight":{"rate":7.99,"formula":"0.000943 x Belpex RLP M [67.52] + 0.0116652"},
-                "injectionDualDay":{"rate":3.6,"formula":"0.0007944 x Belpex M INJ [65.33] - 0.0159"},
-                "injectionDualNight":{"rate":1.12,"formula":"0.0004144 x Belpex M INJ [65.33] - 0.0159"}
-            }
-        },"promotionsContent":[]
-    },
-    MOCK_EAN_GAS: {
-        "productName":"Luminus Gas",
-        "disclaimer":"De vermelde prijzen en eventuele promoties zijn incl. 6% BTW, de tariefformules zijn exclusief btw. ... de prijzen en promoties.",
-        "activeMeterType":"single",
-        "prices":{
-            "single":{
-                "fixed":{"rate":20},
-                "single":{"rate":4.4,"formula":"0.001 x TTF DAH RLP M [36.167] + 0.0053"}
-            }
-        },"promotionsContent":[]
-    }
-}
     
 defHeaders = { 
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -95,13 +33,10 @@ class API:
         self.session = requests.Session()
         self.session.headers.update(defHeaders)
     
-    def __init__(self, user: str, pwd: str, mock: bool = False) -> None:
+    def __init__(self, user: str, pwd: str) -> None:
         self.user = user
         self.pwd = pwd
-        self._create_session()
-        self.mock = mock
-        self.mock_data = deepcopy(MOCK_DATA)
-        self.mock_data_meters = deepcopy(MOCK_DATA_METERS)        
+        self._create_session()    
         self.isLoggedIn = False       
 
 
@@ -111,54 +46,57 @@ class API:
         self.isLoggedIn = False 
 
 
-    def login(self):
-        
-        if self.mock or self.isLoggedIn:
-        #if self.mock:
+    def login(self):     
+        if self.isLoggedIn:
             return
-            
-        _LOGGER.debug('Luminus Login called!')
-        r = self.session.get(f"https://www.luminus.be/myluminus/nl/", timeout=30)
-        u = urlparse(r.history[-1].headers['location'])
-        q = parse_qs(u.query)
-        s = q['state'][0]
 
-        authUriQry = { 'state': s}
-        idHeaders = { 
-            'Origin': 'https://login.luminus.be', 
-            'Referer': 'https://login.luminus.be/u/login/identifier?state=' + s
-        }        
-        idReqBody = { 
-            'state': s, 
-            'username': self.user, 
-            'js-available': 'false', 
-            'webauthn-available' : 'false', 
-            'is-brave': 'false', 
-            'webauthn-platform-available' : 'false', 
-            'action': 'default' 
-        }
-        idReq = self.session.post('https://login.luminus.be/u/login/identifier', params=authUriQry, data=idReqBody, timeout=30, headers=idHeaders)
-        
-        if idReq.status_code != requests.codes.ok:
-            raise APIAuthError()
+        while True:    
+            _LOGGER.debug('Luminus Login called!')
+            r = self.session.get(f"https://www.luminus.be/myluminus/nl/", timeout=30)
+            u = urlparse(r.history[-1].headers['location'])
+            q = parse_qs(u.query)
+            s = q['state'][0]
+
+            authUriQry = { 'state': s}
+            idHeaders = { 
+                'Origin': 'https://login.luminus.be', 
+                'Referer': 'https://login.luminus.be/u/login/identifier?state=' + s
+            }        
+            idReqBody = { 
+                'state': s, 
+                'username': self.user, 
+                'js-available': 'false', 
+                'webauthn-available' : 'false', 
+                'is-brave': 'false', 
+                'webauthn-platform-available' : 'false', 
+                'action': 'default' 
+            }
+            idReq = self.session.post('https://login.luminus.be/u/login/identifier', params=authUriQry, data=idReqBody, timeout=30, headers=idHeaders)
             
-        authHeaders = { 
-            'Origin': 'https://login.luminus.be', 
-            'Referer': 'https://login.luminus.be/u/login/password?state=' + s
-        }
-        authReqBody = { 
-            'state': s, 
-            'username': self.user, 
-            'password': self.pwd,
-            'action': 'default' 
-        }
-        authReq = self.session.post('https://login.luminus.be/u/login/password', params=authUriQry, data=authReqBody, timeout=30, headers=authHeaders)       
-        self.isLoggedIn = authReq.status_code == requests.codes.ok
-        
-        if authReq.status_code != requests.codes.ok:
-            raise APIAuthError()
+            if idReq.status_code != requests.codes.ok:
+                time.sleep(15)
+                continue
+                
+            authHeaders = { 
+                'Origin': 'https://login.luminus.be', 
+                'Referer': 'https://login.luminus.be/u/login/password?state=' + s
+            }
+
+            authReqBody = { 
+                'state': s, 
+                'username': self.user, 
+                'password': self.pwd,
+                'action': 'default' 
+            }
+
+            authReq = self.session.post('https://login.luminus.be/u/login/password', params=authUriQry, data=authReqBody, timeout=30, headers=authHeaders)       
+            self.isLoggedIn = authReq.status_code == requests.codes.ok
             
-        _LOGGER.info('Luminus logged in!')
+            if authReq.status_code != requests.codes.ok:
+                time.sleep(15)
+                continue
+                
+            _LOGGER.info('Luminus logged in!')
 
 
     def get_meters(self) -> list[dict[str, Any]]:
@@ -190,7 +128,7 @@ class API:
                     self.reset_session()
                     self.login()
 
-            except Exception as err:
+            except Exception as e:
                 _LOGGER.warning("Error within get_data()")
                 time.sleep(15)
 
