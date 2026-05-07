@@ -99,7 +99,8 @@ class API:
                 continue
             
             self.isLoggedIn = authReq.status_code == requests.codes.ok
-            if isLoggedIn:
+            
+            if self.isLoggedIn:
                 break
 
             _LOGGER.info('Luminus logged in!')
