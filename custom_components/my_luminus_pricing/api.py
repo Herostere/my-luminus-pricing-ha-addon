@@ -15,6 +15,7 @@ from datetime import datetime
 
 
 _LOGGER = logging.getLogger(__name__)
+LOGGING_TRIES = 0
     
 defHeaders = { 
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -76,7 +77,8 @@ class API:
             
             if idReq.status_code != requests.codes.ok:
                 _LOGGER.warning(f'Login 1 status code: {idReq.status_code}')
-                time.sleep(15)
+                LOGGING_TRIES += 1
+                time.sleep(15 * LOGGING_TRIES)
                 continue
                 
             authHeaders = { 
@@ -95,12 +97,14 @@ class API:
             
             if authReq.status_code != requests.codes.ok:
                 _LOGGER.warning(f'Login 2 status code: {authReq.status_code}')
-                time.sleep(15)
+                LOGGING_TRIES += 1
+                time.sleep(15 * LOGGING_TRIES)
                 continue
             
             self.isLoggedIn = authReq.status_code == requests.codes.ok
             
             if self.isLoggedIn:
+                LOGGING_TRIES = 0
                 break
 
             _LOGGER.info('Luminus logged in!')
