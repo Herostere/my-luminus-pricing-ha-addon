@@ -4,10 +4,11 @@ from datetime import timedelta, datetime
 from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    #CONF_HOST,
     CONF_PASSWORD,
     CONF_SCAN_INTERVAL,
     CONF_USERNAME,
+    FORCAST_DATA_ELECTRICITY,
+    FORCAST_DATA_GAS
 )
 from homeassistant.core import DOMAIN, HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -52,37 +53,21 @@ class LuminusCoordinator(DataUpdateCoordinator):
         # Initialise your api here and make available to your integration.
         self.api = API(user=self.user, pwd=self.pwd)
 
-    def _get_month_weight(self, month: int, energy: str) -> float:
-        """Return seasonal weight for a given month."""
-        if month in (12, 1, 2):        # Winter
-            if energy == "gas":
-                return 2.0
-            return 1.4
-        elif month in (9, 10, 11):  # Autumn
-            if energy == "gas":
-                return 1.3
-            return 1.1
-        elif month in (3, 4, 5):    # Spring
-            if energy == "gas":
-                return 1.1
-            return 1.0
-
-        return 1.0                     # Summer
 
     def _forecast_remaining_cost(self, cost_so_far: float, current_month: int, remaining_months: int, energy: str) -> float:
-        """Forecast remaining cost until next April using seasonal weights."""
+        """Forecast remaining cost until next April."""
         if current_month <= 0 or remaining_months <= 0:
             return 0
 
-        average_monthly_cost = cost_so_far / current_month
         forecast = 0
 
         month_number = current_month
         for offset in range(remaining_months):
-            forecast += average_monthly_cost * self._get_month_weight(month_number, energy)
+            forecast += FORCAST_DATA_GAS.get(month_number, 0) if energy == "gas" else FORCAST_DATA_ELECTRICITY.get(month_number, 0)
             month_number += 1
 
         return forecast
+
 
     async def async_update_data(self):
         """Fetch data from API endpoint.
@@ -118,10 +103,10 @@ class LuminusCoordinator(DataUpdateCoordinator):
                         budget_billing = budgetDetails[0] if budgetDetails[0].get("ean") == eanNr else budgetDetails[1]
 
                         # This can cause issues when the final bill is due. Adding "or" to fix that.
-                        remaining_months = (budget_billing.get("simulation") or {}).get("openAdvancesCount") or 1
+                        remaining_months = (budget_billing.get("simulation") or {}).get("openAdvancesCount") or (12 - ((datetime.now().month - 5) % 12) + 1)
                         already_paid = (budget_billing.get("simulation")or {}).get("totalPaidAmount") or 0
-                        # TODO save already_paid in a file. If value = 0, maybe it is best to take the value from the file. 
-                        # The issue is that we can't get the "already paid" value when My Luminus is not allowing to adjust what we pay.
+                        # There is an issue because we can't get the "already paid" value when My Luminus is not allowing to adjust what we pay.
+                        # Typically happening when Luminus is waiting for the "Décompte"/"Afrekening"
 
                         period_quantities = consumptionDetails.get("periodQuantities", {})
 
