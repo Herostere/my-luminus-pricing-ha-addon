@@ -6,15 +6,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     CONF_PASSWORD,
     CONF_SCAN_INTERVAL,
-    CONF_USERNAME,
-    FORCAST_DATA_ELECTRICITY,
-    FORCAST_DATA_GAS
+    CONF_USERNAME
 )
 from homeassistant.core import DOMAIN, HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import API
-from .const import DEFAULT_SCAN_INTERVAL, GAS_M3_TO_KWH
+from .const import DEFAULT_SCAN_INTERVAL, GAS_M3_TO_KWH, FORCAST_DATA_ELECTRICITY, FORCAST_DATA_GAS
 import logging
 
 _LOGGER = logging.getLogger(__name__)
@@ -107,6 +105,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
                         already_paid = (budget_billing.get("simulation")or {}).get("totalPaidAmount") or 0
                         # There is an issue because we can't get the "already paid" value when My Luminus is not allowing to adjust what we pay.
                         # Typically happening when Luminus is waiting for the "Décompte"/"Afrekening"
+                        # There can be a delay of +- 6 weeks between the final bill and the moment My Luminus allows to adjust the advance payment. During that period, the "already paid" value is not available, which causes the forecast to be inaccurate. Adding "or 0" to fix that, but it can cause the forecast to be inaccurate during that period.
 
                         period_quantities = consumptionDetails.get("periodQuantities", {})
 
