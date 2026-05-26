@@ -48,7 +48,9 @@ class API:
         self.isLoggedIn = False 
 
 
-    def login(self):     
+    def login(self):   
+        global LOGGING_TRIES  
+        
         if self.isLoggedIn:
             self.reset_session()
 
