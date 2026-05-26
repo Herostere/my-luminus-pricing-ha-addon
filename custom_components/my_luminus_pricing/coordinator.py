@@ -73,6 +73,8 @@ class LuminusCoordinator(DataUpdateCoordinator):
         This is the place to retrieve and pre-process the data into an appropriate data structure
         to be used to provide values for all your entities.
         """
+        global UPDATE_TRIES
+
         while True:
             try:
                 # ----------------------------------------------------------------------------
