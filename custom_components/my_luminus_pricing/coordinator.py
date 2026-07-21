@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .api import API
 from .const import DEFAULT_SCAN_INTERVAL, GAS_M3_TO_KWH, FORCAST_DATA_ELECTRICITY, FORCAST_DATA_GAS
 import logging
+import time
 
 _LOGGER = logging.getLogger(__name__)
 UPDATE_TRIES = 0

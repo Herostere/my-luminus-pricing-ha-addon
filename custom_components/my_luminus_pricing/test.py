@@ -10,7 +10,6 @@ import time
 from copy import deepcopy
 from typing import Any
 from urllib.parse import urlparse, parse_qs
-from .const import HTTP_TIMEOUT
 from datetime import datetime
 
 
@@ -35,9 +34,9 @@ class API:
         self.session.headers.update(defHeaders)
     
 
-    def __init__(self, user: str, pwd: str) -> None:
-        self.user = user
-        self.pwd = pwd
+    def __init__(self) -> None:
+        self.user = "luminus.rectify240@passmail.net"
+        self.pwd = "Drool3-Cadmium8-Contend4-Wildfowl4-Pulverize8"
         self._create_session()    
         self.isLoggedIn = False       
 
@@ -102,11 +101,12 @@ class API:
             
             if authReq.status_code != requests.codes.ok and authReq.status_code != 500:
                 _LOGGER.warning(f'Login 2 status code: {authReq.status_code}')
+                _LOGGER.warning(authReq.text)
                 LOGGING_TRIES += 1
                 time.sleep(15 * LOGGING_TRIES)
                 continue
             
-            self.isLoggedIn = authReq.status_code in [requests.codes.ok, 500]
+            self.isLoggedIn = authReq.status_code == requests.codes.ok
             
             if self.isLoggedIn:
                 LOGGING_TRIES = 0
@@ -115,60 +115,7 @@ class API:
             _LOGGER.info('Luminus logged in!')
 
 
-    def get_meters(self) -> list[dict[str, Any]]:
-        return self.get_data('https://www.luminus.be/myluminus/api/meter-readings/available-sources')
-        
-
-    def get_meter(self, ean: str) -> dict[str, Any]:
-        return self.get_data(f"https://www.luminus.be/myluminus/api/price-information/{ean}")
-        
-
-    def get_data(self, url: str) -> list[dict[str, Any]]:
-        while True:
-            try:
-                if self.isLoggedIn:
-                    r = self.session.get(url, timeout=HTTP_TIMEOUT, allow_redirects=False)
-
-                    if r.status_code != requests.codes.ok:
-                        _LOGGER.warning("Luminus response error", r.url, r.status_code, r.text)
-                        self.reset_session()
-                        self.login()
-                        continue
-                    else:
-                        return r.json()
-                else:
-                    self.reset_session()
-                    self.login()
-
-            except Exception as e:
-                _LOGGER.warning("Error within get_data()")
-                time.sleep(15)
-
-
-    def get_current_consumption(self, ean:str):
-        current_year = datetime.now().year
-        current_month = datetime.now().month
-        current_day = datetime.now().day
-        url_year = current_year - 1 if current_month < 5  else current_year  # (current_month < 5 or (current_month == 6 and current_day < 18)) else current_year
-        date_from = f"{url_year}-04-30T23:59:59.999Z"
-        periodicity = "TwelveMonths"
-
-        return self.get_data(f"https://www.luminus.be/myluminus/api/meter-readings/for/{ean}?dateFrom={date_from}&periodicity={periodicity}")
-
-
-    def get_advance_and_paid(self) -> list[dict[str, Any]]:        
-        return self.get_data(f"https://www.luminus.be/myluminus/api/budget-billing")
-
-
-    def logout(self):
-        if not self.isLoggedIn:
-            return
-
-        try:
-            _LOGGER.warning("Logout LUMINUS")
-            r = self.session.get(f"https://www.luminus.be/myluminus/api/auth/logout", timeout=HTTP_TIMEOUT)
-            self.isLoggedIn = False
-            return r.json()
-        except requests.exceptions.ConnectTimeout as e:
-            _LOGGER.warning("Error logging out.")
-
+if __name__=="__main__":
+    print("test")
+    api = API()
+    api.login()
