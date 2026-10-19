@@ -10,16 +10,16 @@ GAS_M3_TO_KWH = 11.5
 FORCAST_DATA_ELECTRICITY = {
     10: 98,  # January
     11: 94,  # February...
-    12: 89,
-    1: 84,
-    2: 88,
-    3: 94,
-    4: 80,
-    5: 80,
-    6: 82,
-    7: 87,
-    8: 94,
-    9: 98
+    12: 89,  # March
+    1: 84,   # April
+    2: 88,   # May
+    3: 94,   # June
+    4: 110,  # July
+    5: 117,  # August
+    6: 90,   # September
+    7: 87,   # October
+    8: 94,   # November
+    9: 98    # December
 }
 
 FORCAST_DATA_GAS = {
@@ -29,9 +29,9 @@ FORCAST_DATA_GAS = {
     1: 25,
     2: 14,
     3: 2,
-    4: 14,
-    5: 14,
-    6: 14,
+    4: 1,
+    5: 1,
+    6: 2,
     7: 14,
     8: 139,
     9: 248
