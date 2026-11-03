@@ -69,21 +69,18 @@
       "singleDay": {
         "name": "Single day"
       },
-      "gas_consumption_kwh": {
-        "name": "Gas consumption kWh"
+      "ideal_monthly_advance": {
+        "name": "Ideal monthly advance"
       },
-      "electricity_consumption_day_kwh": {
-        "name": "Electricity day consumption"
-      },
-      "electricity_consumption_night_kwh": {
-        "name": "Electricity night consumption"
-      },
-      "electricity_consumption_total_kwh": {
-        "name": "Electricity total consumption"
-      },
-      "estimated_cost": {
-        "name": "Estimated cost"
+      "projected_settlement": {
+        "name": "Projected settlement"
       }
+    }
+  },
+  "issues": {
+    "tariffs_unavailable": {
+      "title": "Luminus {energy} tariffs could not be read",
+      "description": "The integration reads network costs, transport costs and taxes from the detail PDF of your Luminus settlement invoices. No usable {energy} settlement was found or it could not be read, so the {energy} forecast is unavailable. It will recover automatically once Luminus issues a readable settlement. Check the Home Assistant log for details."
     }
   }
 }

@@ -19,7 +19,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from datetime import timedelta
 
 from .const import DOMAIN, KEEPALIVE_INTERVAL_HOURS
-from .coordinator import LuminusCoordinator, cookie_store
+from .coordinator import LuminusCoordinator, cookie_store, settlement_store
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -134,5 +134,6 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: MyConfigEntry) -
 
 
 async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
-    """Delete the stored session cookies when the integration is removed."""
+    """Delete the stored session cookies and parsed settlements when the integration is removed."""
     await cookie_store(hass, config_entry.entry_id).async_remove()
+    await settlement_store(hass, config_entry.entry_id).async_remove()

@@ -68,7 +68,19 @@
       },
       "singleDay": {
         "name": "Enkelvoudige meter dag"
+      },
+      "ideal_monthly_advance": {
+        "name": "Ideaal maandelijks voorschot"
+      },
+      "projected_settlement": {
+        "name": "Verwachte afrekening"
       }
+    }
+  },
+  "issues": {
+    "tariffs_unavailable": {
+      "title": "Luminus-tarieven voor {energy} konden niet gelezen worden",
+      "description": "De integratie leest netkosten, transportkosten en heffingen uit de detail-pdf van je Luminus-afrekeningen. Er werd geen bruikbare afrekening voor {energy} gevonden of ze kon niet gelezen worden, dus de voorspelling voor {energy} is niet beschikbaar. Dit herstelt zich vanzelf zodra Luminus een leesbare afrekening uitreikt. Bekijk het Home Assistant-logboek voor details."
     }
   }
 }

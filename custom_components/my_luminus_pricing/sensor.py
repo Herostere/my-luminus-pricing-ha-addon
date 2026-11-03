@@ -40,7 +40,7 @@ async def async_setup_entry(
     # ----------------------------------------------------------------------------
 
     sensors = []
-    skipProps = ['device_id', 'device_name', 'device_type', 'product_name']
+    skipProps = ['device_id', 'device_name', 'device_type', 'product_name', 'attributes']
     for device in coordinator.data:
         sensors.append(LuminusBaseSensor(coordinator, device, 'product_name'))
         for propName, price in device.items():
@@ -53,11 +53,8 @@ async def async_setup_entry(
 
             if propName == 'fixed':
                 sensorType = YearlyPriceSensor
-            elif propName in ['estimated_cost']:
-                sensorType = MonetarySensor
-            elif propName in ['electricity_consumption_day_kwh', 'electricity_consumption_night_kwh', 'electricity_consumption_total_kwh']:
-                continue
-                # sensorType = EnergyConsumptionSensor
+            elif propName in ['ideal_monthly_advance', 'projected_settlement']:
+                sensorType = ForecastSensor
             else:
                 sensorType = EnergyPriceSensor
 
@@ -90,15 +87,16 @@ class EnergyPriceSensor(LuminusBaseSensor):
     _attr_suggested_display_precision = 4
 
 
-class MonetarySensor(LuminusBaseSensor):
-    _attr_has_entity_name = False
+class ForecastSensor(LuminusBaseSensor):
+    """Ideal monthly advance or projected settlement, with the forecast details as attributes."""
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_native_unit_of_measurement = 'EUR'
     _attr_suggested_display_precision = 2
 
     @property
-    def name(self) -> str:
-        return "Estimated cost"
+    def extra_state_attributes(self) -> dict | None:
+        attributes = self.coordinator.get_device_parameter(self.device_id, 'attributes') or {}
+        return attributes.get(self.parameter)
 
 
 class EnergyConsumptionSensor(LuminusBaseSensor):

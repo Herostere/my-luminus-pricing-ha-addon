@@ -15,6 +15,7 @@ import threading
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
@@ -184,3 +185,20 @@ class API:
 
     def get_advance_and_paid(self) -> list[dict[str, Any]]:
         return self.get_data(f"/myluminus/api/budget-billing")
+
+
+    def get_invoices(self) -> list[dict[str, Any]]:
+        return self.get_data('/myluminus/api/invoices').get('invoices', [])
+
+
+    def get_invoice_pdf(self, invoice_id: str) -> bytes:
+        """Download the detailed PDF of an invoice (settlements list every tariff line)."""
+        meta = self.get_data(f'/myluminus/api/invoice-document/{invoice_id}?format=pdf&detailed=true')
+        url = urlparse(meta.get('contentUrl', ''))
+        # Only follow links on www.luminus.be: the session cookies are sent with the request
+        if url.scheme != 'https' or url.netloc != urlparse(BASE_URL).netloc:
+            raise RuntimeError(f'Unexpected document location for invoice {invoice_id}: {url.netloc}')
+        r = self._request(url.path + (f'?{url.query}' if url.query else ''))
+        if not r.content.startswith(b'%PDF'):
+            raise RuntimeError(f'Invoice {invoice_id} document is not a PDF')
+        return r.content

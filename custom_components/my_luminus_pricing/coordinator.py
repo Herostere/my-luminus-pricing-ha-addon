@@ -1,22 +1,36 @@
 """DataUpdateCoordinator for our integration."""
 
 import hashlib
-from datetime import timedelta, datetime
+import logging
+from datetime import date, timedelta
 from typing import Any
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_SCAN_INTERVAL
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
+from . import forecast as fc
+from . import tariffs as tf
 from .api import API, AuthError
-from .const import CONF_COOKIES, DEFAULT_SCAN_INTERVAL, DOMAIN, GAS_M3_TO_KWH, FORCAST_DATA_ELECTRICITY, FORCAST_DATA_GAS
-import logging
+from .const import CONF_COOKIES, DEFAULT_SCAN_INTERVAL, DOMAIN, GAS_M3_TO_KWH
+from .weather import async_fetch_temperatures
 
 _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
+
+# Meter register -> price key in the price-information response
+REGISTER_PRICE_KEYS = {
+    "Day": ("dualDay", "single"),
+    "Night": ("dualNight", "exclusiveNight", "single"),
+    fc.GAS_REGISTER: ("single",),
+}
 
 
 def cookie_store(hass: HomeAssistant, entry_id: str) -> Store:
@@ -26,6 +40,11 @@ def cookie_store(hass: HomeAssistant, entry_id: str) -> Store:
     triggers the update listener in __init__.py, which reloads the integration.
     """
     return Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}.cookies")
+
+
+def settlement_store(hass: HomeAssistant, entry_id: str) -> Store:
+    """Storage file caching the tariff lines parsed from each settlement PDF."""
+    return Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}.settlements")
 
 
 class LuminusCoordinator(DataUpdateCoordinator):
@@ -43,6 +62,13 @@ class LuminusCoordinator(DataUpdateCoordinator):
         self._store = cookie_store(hass, config_entry.entry_id)
         self._saved_cookies: dict[str, str] | None = None
         self.api: API | None = None
+
+        # Parsed settlements {invoice id: parsed tariffs or {"error": ...}}
+        self._settlement_store = settlement_store(hass, config_entry.entry_id)
+        self._settlements: dict[str, Any] = {}
+        # Daily mean temperatures, refreshed once a day
+        self._temps: dict[date, float] = {}
+        self._temps_day: date | None = None
 
         # set variables from options.  You need a default here in case options have not been set
         self.poll_interval = config_entry.options.get(
@@ -65,19 +91,17 @@ class LuminusCoordinator(DataUpdateCoordinator):
 
 
     async def _async_setup(self) -> None:
-        """Load the latest renewed cookies before the first refresh."""
+        """Load the latest renewed cookies and parsed settlements before the first refresh."""
         if not self.entry_cookies:
             raise ConfigEntryAuthFailed("No My Luminus cookies configured")
 
         stored = await self._store.async_load()
-        if stored and stored.get("seed") == self._seed and stored.get("cookies"):
-            cookies = stored["cookies"]
-        else:
-            # New or re-pasted cookies: start from what the user entered
-            cookies = self.entry_cookies
+        same_seed = bool(stored and stored.get("seed") == self._seed and stored.get("cookies"))
+        # New or re-pasted cookies: start from what the user entered
+        self.api = API(stored["cookies"] if same_seed else self.entry_cookies)
+        self._saved_cookies = dict(self.api.cookies) if same_seed else None
 
-        self.api = API(cookies)
-        self._saved_cookies = dict(self.api.cookies) if stored and stored.get("seed") == self._seed else None
+        self._settlements = (await self._settlement_store.async_load() or {}).get("parsed", {})
 
 
     async def _async_save_cookies(self) -> None:
@@ -102,19 +126,159 @@ class LuminusCoordinator(DataUpdateCoordinator):
             _LOGGER.warning("My Luminus keep-alive failed, will retry: %s", err)
 
 
-    def _forecast_remaining_cost(self, cost_so_far: float, current_month: int, remaining_months: int, energy: str) -> float:
-        """Forecast remaining cost until next April."""
-        if current_month <= 0 or remaining_months <= 0:
-            return 0
+    # ----------------------------------------------------------------------------
+    # Tariffs and weather
+    # ----------------------------------------------------------------------------
 
-        forecast = 0
+    async def _async_update_settlements(self, current_eans: set[str]) -> dict[str, Any]:
+        """Parse settlement PDFs not seen before; return the merged tariffs per energy type.
 
-        month_number = current_month
-        for offset in range(remaining_months):
-            forecast += FORCAST_DATA_GAS.get(month_number, 0) if energy == "gas" else FORCAST_DATA_ELECTRICITY.get(month_number, 0)
-            month_number += 1
+        Only settlements of the current meters (EANs) are used, so tariffs from a
+        previous address, possibly with another network operator, never mix in.
+        """
+        invoices = await self.hass.async_add_executor_job(self.api.get_invoices)
+        # invoice id -> energy types of that settlement that belong to a current meter
+        current: dict[str, set[str]] = {}
+        changed = False
+        for invoice in invoices:
+            if invoice.get("type") != "Settlement" or "Detail" not in invoice.get("documents", []):
+                continue
+            invoice_id = str(invoice["id"])
+            energies = {
+                c.get("energyType") for c in invoice.get("contractInfo", []) if c.get("ean") in current_eans
+            }
+            if not energies:
+                continue
+            current[invoice_id] = energies
+            if invoice_id in self._settlements:
+                continue
+            try:
+                pdf = await self.hass.async_add_executor_job(self.api.get_invoice_pdf, invoice_id)
+                text = await self.hass.async_add_executor_job(tf.pdf_text, pdf)
+                self._settlements[invoice_id] = tf.parse_settlement_text(text)
+                _LOGGER.info("Read tariffs from Luminus settlement of %s", invoice.get("date", "")[:10])
+            except AuthError:
+                raise
+            except Exception as err:  # pylint: disable=broad-except
+                # Remember the failure so a broken PDF is not downloaded on every refresh
+                _LOGGER.warning("Could not read tariffs from settlement %s: %s", invoice_id, err)
+                self._settlements[invoice_id] = {"error": str(err)}
+            changed = True
+        if changed:
+            await self._settlement_store.async_save({"parsed": self._settlements})
 
-        return forecast
+        return tf.merge_settlements([
+            {energy: section for energy, section in self._settlements[invoice_id].items() if energy in energies}
+            for invoice_id, energies in current.items()
+            if "error" not in self._settlements.get(invoice_id, {"error": "not parsed"})
+        ])
+
+
+    async def _async_update_temperatures(self, today: date) -> dict[date, float]:
+        """Daily temperatures from Open-Meteo, at most once a day; keeps the last result on failure."""
+        if self._temps_day == today:
+            return self._temps
+        latitude, longitude = self.hass.config.latitude, self.hass.config.longitude
+        if latitude is None or longitude is None:
+            return self._temps
+        try:
+            self._temps = await async_fetch_temperatures(async_get_clientsession(self.hass), latitude, longitude, today)
+            self._temps_day = today
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.warning("Could not fetch temperatures from Open-Meteo: %s", err)
+        return self._temps
+
+
+    def _update_tariff_issue(self, energy: str, available: bool) -> None:
+        """Show a Repairs entry while no tariffs could be read for an energy type."""
+        issue_id = f"tariffs_unavailable_{self.config_entry.entry_id}_{energy.lower()}"
+        if available:
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+        else:
+            ir.async_create_issue(
+                self.hass, DOMAIN, issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="tariffs_unavailable",
+                translation_placeholders={"energy": energy},
+            )
+
+
+    # ----------------------------------------------------------------------------
+    # Forecast
+    # ----------------------------------------------------------------------------
+
+    def _forecast(
+        self, energy: str, prices: dict, consumption: dict, budget: dict | None,
+        tariffs: dict | None, temps: dict[date, float], today: date,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Values and attributes for the forecast sensors of one meter."""
+        values: dict[str, Any] = {"ideal_monthly_advance": None, "projected_settlement": None}
+        simulation = (budget or {}).get("simulation") or {}
+        attributes: dict[str, Any] = {
+            "luminus_ideal_advance": simulation.get("idealAdvanceAmount"),
+            "luminus_projected_cost": simulation.get("totalAmount"),
+            "luminus_projected_settlement": simulation.get("settlementAmount"),
+            "current_advance": (budget or {}).get("advanceAmount"),
+        }
+        if not tariffs or not simulation.get("fromDate") or not simulation.get("untilDate"):
+            attributes["status"] = "no tariffs from a settlement yet" if not tariffs else "no budget period from Luminus"
+            return values, attributes
+
+        readings = fc.readings_from_api(consumption.get("indexes", []))
+        registers = list(readings[-1].indexes) if readings else []
+        price_per_kwh = {}
+        for register in registers:
+            key = next((k for k in REGISTER_PRICE_KEYS.get(register, ("single",)) if k in prices), None)
+            if key is None:
+                continue
+            # API rate is in c€/kWh incl. VAT; network, transport and taxes from the settlements
+            price_per_kwh[register] = prices[key]["rate"] / 100 + tf.price_per_kwh(tariffs, register)
+        fixed = prices.get("fixed", {}).get("rate", 0) + tf.fixed_per_year(tariffs)
+        kwh_per_unit = (tariffs.get("conversion_factor") or GAS_M3_TO_KWH) if energy == "Gas" else 1.0
+
+        result = fc.forecast_energy(
+            energy=energy,
+            readings=readings,
+            temps=temps,
+            today=today,
+            period_start=date.fromisoformat(simulation["fromDate"][:10]),
+            period_end=date.fromisoformat(simulation["untilDate"][:10]),
+            price_per_kwh=price_per_kwh,
+            fixed_per_year=fixed,
+            kwh_per_unit=kwh_per_unit,
+            paid=simulation.get("totalPaidAmount") or 0,
+            open_advances=simulation.get("openAdvancesCount") or 0,
+            current_advance=(budget or {}).get("advanceAmount"),
+        )
+        if result is None:
+            attributes["status"] = "not enough meter readings or weather data"
+            return values, attributes
+
+        values["ideal_monthly_advance"] = round(result.ideal_advance, 2) if result.ideal_advance is not None else None
+        values["projected_settlement"] = round(result.projected_settlement, 2) if result.projected_settlement is not None else None
+        attributes.update({
+            "status": "ok",
+            "ideal_advance_low": round(result.ideal_advance_low, 2) if result.ideal_advance_low is not None else None,
+            "ideal_advance_high": round(result.ideal_advance_high, 2) if result.ideal_advance_high is not None else None,
+            "projected_cost": round(result.projected_cost, 2),
+            "projected_cost_low": round(result.projected_cost_low, 2),
+            "projected_cost_high": round(result.projected_cost_high, 2),
+            "paid_in_period": simulation.get("totalPaidAmount"),
+            "open_advances": simulation.get("openAdvancesCount"),
+            "period_start": simulation["fromDate"][:10],
+            "period_end": simulation["untilDate"][:10],
+            "used_so_far": result.used_so_far,
+            "forecast_rest_of_period": result.forecast_use,
+            "unit": result.unit,
+            "last_meter_reading": result.last_reading.isoformat(),
+            "price_per_kwh_all_in": {r: round(p, 4) for r, p in price_per_kwh.items()},
+            "fixed_costs_per_year": round(fixed, 2),
+            "tariffs_from_settlement_until": tariffs.get("settlement_period_end"),
+            **({"kwh_per_m3": kwh_per_unit} if energy == "Gas" else {}),
+            **result.details,
+        })
+        return values, attributes
 
 
     async def async_update_data(self):
@@ -124,98 +288,53 @@ class LuminusCoordinator(DataUpdateCoordinator):
         to be used to provide values for all your entities.
         """
         try:
-            # ----------------------------------------------------------------------------
-            # Get the data from your api
-            # ----------------------------------------------------------------------------
-
             # Renew the session first; this also detects expired cookies early
             await self.hass.async_add_executor_job(self.api.renew)
             meters = await self.hass.async_add_executor_job(self.api.get_meters)
-            data = []
+            budgets = await self.hass.async_add_executor_job(self.api.get_advance_and_paid)
+            budget_by_ean = {b.get("ean"): b for b in budgets or []}
+            all_tariffs = await self._async_update_settlements({m['ean'] for m in meters['meters']})
 
-            current_month = ((datetime.now().month - 5) % 12) + 1
+            today = dt_util.now().date()
+            temps = await self._async_update_temperatures(today)
+            data = []
 
             for meter in meters['meters']:
                 eanNr = meter['ean']
                 energyType = meter['energyType']
                 meterDetails = await self.hass.async_add_executor_job(self.api.get_meter, eanNr)
                 consumptionDetails = await self.hass.async_add_executor_job(self.api.get_current_consumption, eanNr)
-                budgetDetails = await self.hass.async_add_executor_job(self.api.get_advance_and_paid)
+                if not meterDetails:
+                    continue
 
-                if meterDetails and consumptionDetails and budgetDetails:
-                    pname = meterDetails['productName']
-                    prices = meterDetails['prices']
-                    meterType = "dual" if "dual" in prices else meterDetails['activeMeterType']
-                    meterPrices = prices[meterType]
-                    budget_billing = budgetDetails[0] if budgetDetails[0].get("ean") == eanNr else budgetDetails[1]
+                pname = meterDetails['productName']
+                prices = meterDetails['prices']
+                meterType = meterDetails.get('activeMeterType')
+                if meterType not in prices:
+                    meterType = "dual" if "dual" in prices else next(iter(prices))
+                meterPrices = prices[meterType]
 
-                    # This can cause issues when the final bill is due. Adding "or" to fix that.
-                    remaining_months = (budget_billing.get("simulation") or {}).get("openAdvancesCount") or (12 - ((datetime.now().month - 5) % 12) + 1)
-                    already_paid = (budget_billing.get("simulation")or {}).get("totalPaidAmount") or 0
-                    # There is an issue because we can't get the "already paid" value when My Luminus is not allowing to adjust what we pay.
-                    # Typically happening when Luminus is waiting for the "Décompte"/"Afrekening"
-                    # There can be a delay of +- 6 weeks between the final bill and the moment My Luminus allows to adjust the advance payment. During that period, the "already paid" value is not available, which causes the forecast to be inaccurate. Adding "or 0" to fix that, but it can cause the forecast to be inaccurate during that period.
+                device = {
+                    'device_id': eanNr,
+                    'device_name': pname + ' (' + eanNr + ')',
+                    'device_type': energyType,
+                    'product_name': pname
+                }
+                data.append(device)
 
-                    period_quantities = consumptionDetails.get("periodQuantities", {})
+                for propName, price in meterPrices.items():
+                    device[propName] = price['rate'] / (1 if propName == 'fixed' else 100)
 
-                    device = {
-                        'device_id': eanNr,
-                        'device_name': pname + ' (' + eanNr + ')',
-                        'device_type': energyType,
-                        'product_name': pname
-                    }
-                    data.append(device)
+                tariffs = all_tariffs.get(energyType)
+                self._update_tariff_issue(energyType, tariffs is not None)
+                values, attributes = self._forecast(
+                    energyType, meterPrices, consumptionDetails or {}, budget_by_ean.get(eanNr),
+                    tariffs, temps, today,
+                )
+                device.update(values)
+                device['attributes'] = {key: attributes for key in values}
 
-                    for propName, price in meterPrices.items():
-                        device[propName] = price['rate'] / (1 if propName == 'fixed' else 100)
-
-                    if energyType == "Gas":
-                        gas_m3 = period_quantities.get("offtake", 0)
-                        gas_kwh = gas_m3 * GAS_M3_TO_KWH
-                        gas_price = device.get("single", 0)
-
-                        cost_so_far = gas_kwh * gas_price
-                        forecast_remaining = self._forecast_remaining_cost(cost_so_far, current_month, remaining_months, "gas")
-                        projected_total = cost_so_far + forecast_remaining
-
-                        device["estimated_cost"] = (projected_total - already_paid) / remaining_months 
-                        # device["estimated_cost"] = ((gas_kwh * gas_price) - already_paid) / remaining_months
-                        
-                        _LOGGER.warning("Gas debug ean=%s gas_m3=%s gas_kwh=%s gas_price=%s already_paid=%s remaining_months=%s current_month=%s", eanNr, gas_m3, gas_kwh, gas_price, already_paid, remaining_months, current_month,)
-                        _LOGGER.warning("Forecast debug cost_so_far=%s forecast_remaining=%s projected_total=%s estimated=%s", cost_so_far, forecast_remaining, projected_total, (projected_total - already_paid) / remaining_months if remaining_months else None,)
-
-                    elif energyType == "Electricity":
-                        day_kwh = 0
-                        night_kwh = 0
-
-                        for detail in period_quantities.get("details", []):
-                            if detail.get("direction") != "Offtake":
-                                continue
-
-                            if detail.get("timeFrame") == "Day":
-                                day_kwh = detail.get("quantity", 0)
-                            elif detail.get("timeFrame") == "Night":
-                                night_kwh = detail.get("quantity", 0)
-
-                        device["electricity_consumption_day_kwh"] = day_kwh
-                        device["electricity_consumption_night_kwh"] = night_kwh
-
-                        day_price = 0
-                        night_price = 0
-                        if meterType == "dual":
-                            day_price = device.get("dualDay", 0)
-                            night_price = device.get("dualNight", 0)
-                            
-                        cost_so_far = (day_kwh * day_price) + (night_kwh * night_price)
-                        forecast_remaining = self._forecast_remaining_cost(cost_so_far, current_month, remaining_months, "electricity")
-                        projected_total = cost_so_far + forecast_remaining
-
-                        device["estimated_cost"] = (projected_total - already_paid) / remaining_months    
-                        # device["estimated_cost"] = ((day_kwh * day_price) + (night_kwh * night_price) - already_paid) / remaining_months
-                    
-            #await self.hass.async_add_executor_job(self.api.logout)
             _LOGGER.info('Data updated.')
-            #_LOGGER.warning('updated coordinator data', data)
 
         except AuthError as err:
             # Home Assistant starts a reauthentication flow asking for fresh cookies

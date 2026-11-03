@@ -3,5 +3,9 @@
   "name": "My Luminus - Pricing",
   "version": "1.0.0.0",
   "single_config_entry": false,
-  "config_flow": true
+  "config_flow": true,
+  "requirements": [
+    "pypdf>=4.0.0"
+  ],
+  "iot_class": "cloud_polling"
 }
