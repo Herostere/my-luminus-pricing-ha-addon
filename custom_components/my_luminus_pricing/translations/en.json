@@ -4,62 +4,71 @@
     "abort": {
       "already_configured": "Device is already configured",
       "reconfigure_successful": "Reconfiguration successful",
-      "already_in_progress": "A setup is already in progress for this integration"
+      "already_in_progress": "A setup is already in progress for this integration",
+      "reauth_successful": "Reauthentication successful"
     },
     "error": {
       "cannot_connect": "Failed to connect",
       "invalid_auth": "Invalid authentication",
       "invalid_settings": "Invalid settings",
-      "unknown": "Unexpected error"
+      "unknown": "Unexpected error",
+      "invalid_cookies": "Luminus rejected the cookies (expired, logged out or blocked). Copy fresh cookies from your browser."
     },
     "step": {
       "user": {
         "title": "My Luminus - Add device",
-        "data": {          
-          "password": "Password",
-          "username": "Username"
+        "description": "Log in at https://www.luminus.be/myluminus/nl/ in your browser. Open the developer tools (F12), Network tab, reload the page, select the first www.luminus.be request and copy the value of the 'cookie' request header. The session is renewed automatically; you only need to paste new cookies if Home Assistant asks you to reauthenticate.",
+        "data": {
+          "cookies": "Cookies from www.luminus.be"
         }
       },
       "reconfigure": {
+        "description": "Log in at https://www.luminus.be/myluminus/nl/ in your browser. Open the developer tools (F12), Network tab, reload the page, select the first www.luminus.be request and copy the value of the 'cookie' request header. The session is renewed automatically; you only need to paste new cookies if Home Assistant asks you to reauthenticate.",
         "data": {
-          "password": "Password",
-          "username": "Username"
+          "cookies": "Cookies from www.luminus.be"
+        }
+      },
+      "reauth_confirm": {
+        "title": "My Luminus - Session expired",
+        "description": "The My Luminus session is no longer valid. Log in at https://www.luminus.be/myluminus/nl/ in your browser. Open the developer tools (F12), Network tab, reload the page, select the first www.luminus.be request and copy the value of the 'cookie' request header. The session is renewed automatically; you only need to paste new cookies if Home Assistant asks you to reauthenticate.",
+        "data": {
+          "cookies": "Cookies from www.luminus.be"
         }
       }
     }
-  }, 
+  },
   "entity": {
-	"sensor": {
-	  "product_name": { 
-		"name": "Name of product" 
-	  },
-	  "dualDay": { 
-		"name": "Dual day" 
-	  },
-	  "dualNight": { 
-		"name": "Dual night" 
-	  },
-	  "exclusiveNight": { 
-		"name": "Exclusive night" 
-	  },
-	  "fixed": { 
-		"name": "Fixed" 
-	  },
-	  "injectionDualDay": { 
-		"name": "Injection dual day" 
-	  },
-	  "injectionDualNight": { 
-		"name": "Injection dual night" 
-	  },
-	  "injectionSingle": { 
-		"name": "Injection single" 
-	  },
-	  "single": { 
-		"name": "Single" 
-	  },
-	  "singleDay": { 
-		"name": "Single day" 
-	  }
-	}
+    "sensor": {
+      "product_name": {
+        "name": "Name of product"
+      },
+      "dualDay": {
+        "name": "Dual day"
+      },
+      "dualNight": {
+        "name": "Dual night"
+      },
+      "exclusiveNight": {
+        "name": "Exclusive night"
+      },
+      "fixed": {
+        "name": "Fixed"
+      },
+      "injectionDualDay": {
+        "name": "Injection dual day"
+      },
+      "injectionDualNight": {
+        "name": "Injection dual night"
+      },
+      "injectionSingle": {
+        "name": "Injection single"
+      },
+      "single": {
+        "name": "Single"
+      },
+      "singleDay": {
+        "name": "Single day"
+      }
+    }
   }
 }

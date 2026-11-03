@@ -2,22 +2,31 @@
 https://requests.readthedocs.io/en/latest/user/quickstart/
 https://developers.home-assistant.io/docs/integration_fetching_data
 https://3.python-requests.org/user/advanced/
+
+Authentication uses the cookies of a My Luminus session started in a browser.
+The username/password login was dropped because Luminus' Auth0 login now shows
+a CAPTCHA to automated clients. The session cookies (__session__0, __session__1)
+are valid for 24 hours and are renewed by loading a My Luminus page (renew()).
 """
 
+import http.cookiejar
 import logging
-import requests
-import time
-from copy import deepcopy
+import threading
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
-from urllib.parse import urlparse, parse_qs
+
+import requests
+
 from .const import HTTP_TIMEOUT
-from datetime import datetime
 
 
 _LOGGER = logging.getLogger(__name__)
-LOGGING_TRIES = 0
-    
-defHeaders = { 
+
+BASE_URL = 'https://www.luminus.be'
+RENEW_PATH = '/myluminus/nl'
+
+defHeaders = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'nl,en-US;q=0.7,en;q=0.3',
     'Sec-Fetch-Dest': 'document',
@@ -28,121 +37,138 @@ defHeaders = {
     'User-Agent' : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0'
 }
 
+
+class AuthError(Exception):
+    """The browser cookies no longer give access; fresh cookies are needed."""
+
+
+class IncapsulaBlocked(AuthError):
+    """Luminus' Incapsula bot protection blocked the request."""
+
+
+class SessionExpired(AuthError):
+    """The My Luminus session has expired or was logged out."""
+
+
+def parse_cookies(raw: str | None) -> dict[str, str]:
+    """Parse a 'name=value; name=value' cookie header into a dict.
+
+    Accepts an optional 'www.luminus.be:' prefix per line. When a name occurs
+    twice (same cookie on different paths), the last one wins: browsers list the
+    most specific path first, so the last one is the site-wide ('/') cookie.
+    """
+    cookies = {}
+    for line in (raw or '').splitlines():
+        line = line.strip()
+        if line.lower().startswith('www.luminus.be:'):
+            line = line.split(':', 1)[1]
+        elif line.lower().startswith('login.luminus.be:'):
+            continue
+        for part in line.split(';'):
+            if '=' in part:
+                name, value = part.split('=', 1)
+                if name.strip():
+                    cookies[name.strip()] = value.strip()
+    return cookies
+
+
+def _is_deletion(attrs: dict[str, str]) -> bool:
+    """True when Set-Cookie attributes expire the cookie immediately."""
+    max_age = attrs.get('max-age')
+    if max_age is not None:
+        try:
+            return int(max_age) <= 0
+        except ValueError:
+            return False
+    expires = attrs.get('expires')
+    if expires:
+        try:
+            return parsedate_to_datetime(expires) <= datetime.now(timezone.utc)
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
 class API:
 
-    def _create_session(self):
+    def __init__(self, cookies: dict[str, str] | str) -> None:
+        self.cookies: dict[str, str] = parse_cookies(cookies) if isinstance(cookies, str) else dict(cookies)
+        self._lock = threading.Lock()
         self.session = requests.Session()
         self.session.headers.update(defHeaders)
-    
-
-    def __init__(self, user: str, pwd: str) -> None:
-        self.user = user
-        self.pwd = pwd
-        self._create_session()    
-        self.isLoggedIn = False       
+        # Cookies are managed by hand in self.cookies (see _apply_set_cookies), so
+        # block the session's own cookie jar to avoid duplicate cookies.
+        self.session.cookies.set_policy(http.cookiejar.DefaultCookiePolicy(allowed_domains=[]))
 
 
-    def reset_session(self):
-        self.session.close()
-        self._create_session()
-        self.isLoggedIn = False 
+    @property
+    def account_id(self) -> str | None:
+        return self.cookies.get('MyLuminus-AccountId')
 
 
-    def login(self):   
-        global LOGGING_TRIES  
-        
-        if self.isLoggedIn:
-            self.reset_session()
-
-        while True:    
-            _LOGGER.warning('Luminus Login called!')
-            r = self.session.get(f"https://www.luminus.be/myluminus/nl/", timeout=30)
-            u = urlparse(r.history[-1].headers['location'])
-            q = parse_qs(u.query)
-            try:
-                s = q['state'][0]
-            except KeyError as e:
+    def _apply_set_cookies(self, r: requests.Response) -> None:
+        """Store cookies the server sets or renews, like a browser would."""
+        for header in r.raw.headers.getlist('Set-Cookie'):
+            first, _, rest = header.partition(';')
+            if '=' not in first:
                 continue
+            name, value = (x.strip() for x in first.split('=', 1))
+            attrs = {}
+            for a in rest.split(';'):
+                k, _, v = a.partition('=')
+                attrs[k.strip().lower()] = v.strip()
+            path = attrs.get('path', '/')
 
-            authUriQry = { 'state': s}
-            idHeaders = { 
-                'Origin': 'https://login.luminus.be', 
-                'Referer': 'https://login.luminus.be/u/login/identifier?state=' + s
-            }        
-            idReqBody = { 
-                'state': s, 
-                'username': self.user, 
-                'js-available': 'false', 
-                'webauthn-available' : 'false', 
-                'is-brave': 'false', 
-                'webauthn-platform-available' : 'false', 
-                'action': 'default' 
-            }
-            idReq = self.session.post('https://login.luminus.be/u/login/identifier', params=authUriQry, data=idReqBody, timeout=30, headers=idHeaders)
-            
-            if idReq.status_code != requests.codes.ok:
-                _LOGGER.warning(f'Login 1 status code: {idReq.status_code}')
-                LOGGING_TRIES += 1
-                time.sleep(15 * LOGGING_TRIES)
-                continue
-                
-            authHeaders = { 
-                'Origin': 'https://login.luminus.be', 
-                'Referer': 'https://login.luminus.be/u/login/password?state=' + s
-            }
+            if _is_deletion(attrs):
+                # Luminus also clears stale copies under /myluminus; only a
+                # deletion of the site-wide cookie removes ours.
+                if path == '/':
+                    self.cookies.pop(name, None)
+            elif path == '/':
+                self.cookies[name] = value
 
-            authReqBody = { 
-                'state': s, 
-                'username': self.user, 
-                'password': self.pwd,
-                'action': 'default' 
-            }
 
-            authReq = self.session.post('https://login.luminus.be/u/login/password', params=authUriQry, data=authReqBody, timeout=30, headers=authHeaders)       
-            
-            if authReq.status_code != requests.codes.ok and authReq.status_code != 500:
-                _LOGGER.warning(f'Login 2 status code: {authReq.status_code}')
-                LOGGING_TRIES += 1
-                time.sleep(15 * LOGGING_TRIES)
-                continue
-            
-            self.isLoggedIn = authReq.status_code in [requests.codes.ok, 500]
-            
-            if self.isLoggedIn:
-                LOGGING_TRIES = 0
-                break
+    def _request(self, path: str) -> requests.Response:
+        with self._lock:
+            header = '; '.join(f'{k}={v}' for k, v in self.cookies.items())
+            r = self.session.get(
+                BASE_URL + path,
+                headers={'Cookie': header},
+                timeout=HTTP_TIMEOUT,
+                allow_redirects=False,
+            )
+            self._apply_set_cookies(r)
 
-            _LOGGER.info('Luminus logged in!')
+        if r.status_code == 403 and 'Incapsula' in r.text:
+            raise IncapsulaBlocked('Blocked by Incapsula bot protection')
+        if r.is_redirect or r.status_code in (401, 403):
+            location = r.headers.get('location', '').split('?')[0]
+            raise SessionExpired(f'Session not accepted: status {r.status_code} {location}'.strip())
+        if r.status_code != requests.codes.ok:
+            raise RuntimeError(f'Luminus returned status {r.status_code} for {path}')
+        return r
+
+
+    def renew(self) -> None:
+        """Load a My Luminus page; the response renews the 24 h session cookies."""
+        self._request(RENEW_PATH)
+        _LOGGER.debug('Luminus session renewed')
 
 
     def get_meters(self) -> list[dict[str, Any]]:
-        return self.get_data('https://www.luminus.be/myluminus/api/meter-readings/available-sources')
-        
+        return self.get_data('/myluminus/api/meter-readings/available-sources')
+
 
     def get_meter(self, ean: str) -> dict[str, Any]:
-        return self.get_data(f"https://www.luminus.be/myluminus/api/price-information/{ean}")
-        
+        return self.get_data(f"/myluminus/api/price-information/{ean}")
 
-    def get_data(self, url: str) -> list[dict[str, Any]]:
-        while True:
-            try:
-                if self.isLoggedIn:
-                    r = self.session.get(url, timeout=HTTP_TIMEOUT, allow_redirects=False)
 
-                    if r.status_code != requests.codes.ok:
-                        _LOGGER.warning("Luminus response error", r.url, r.status_code, r.text)
-                        self.reset_session()
-                        self.login()
-                        continue
-                    else:
-                        return r.json()
-                else:
-                    self.reset_session()
-                    self.login()
-
-            except Exception as e:
-                _LOGGER.warning("Error within get_data()")
-                time.sleep(15)
+    def get_data(self, path: str) -> list[dict[str, Any]]:
+        r = self._request(path)
+        try:
+            return r.json()
+        except ValueError as e:
+            raise RuntimeError(f'Luminus returned non-JSON content for {path}') from e
 
 
     def get_current_consumption(self, ean:str):
@@ -153,22 +179,8 @@ class API:
         date_from = f"{url_year}-04-30T23:59:59.999Z"
         periodicity = "TwelveMonths"
 
-        return self.get_data(f"https://www.luminus.be/myluminus/api/meter-readings/for/{ean}?dateFrom={date_from}&periodicity={periodicity}")
+        return self.get_data(f"/myluminus/api/meter-readings/for/{ean}?dateFrom={date_from}&periodicity={periodicity}")
 
 
-    def get_advance_and_paid(self) -> list[dict[str, Any]]:        
-        return self.get_data(f"https://www.luminus.be/myluminus/api/budget-billing")
-
-
-    def logout(self):
-        if not self.isLoggedIn:
-            return
-
-        try:
-            _LOGGER.warning("Logout LUMINUS")
-            r = self.session.get(f"https://www.luminus.be/myluminus/api/auth/logout", timeout=HTTP_TIMEOUT)
-            self.isLoggedIn = False
-            return r.json()
-        except requests.exceptions.ConnectTimeout as e:
-            _LOGGER.warning("Error logging out.")
-
+    def get_advance_and_paid(self) -> list[dict[str, Any]]:
+        return self.get_data(f"/myluminus/api/budget-billing")

@@ -4,62 +4,71 @@
     "abort": {
       "already_configured": "Apparaat is reeds geconfigureerd",
       "reconfigure_successful": "Herconfiguratie voltooid",
-      "already_in_progress": "De installatieprocedure is reeds opgestart"
+      "already_in_progress": "De installatieprocedure is reeds opgestart",
+      "reauth_successful": "Herverificatie voltooid"
     },
     "error": {
       "cannot_connect": "Kan geen verbinding maken",
       "invalid_auth": "Authenticatie mislukt",
       "invalid_settings": "Ongeldige configuratie",
-      "unknown": "Onbehandelde fout"
+      "unknown": "Onbehandelde fout",
+      "invalid_cookies": "Luminus weigerde de cookies (verlopen, afgemeld of geblokkeerd). Kopieer nieuwe cookies uit je browser."
     },
     "step": {
       "user": {
         "title": "My Luminus - apparaat toevoegen",
-        "data": {          
-          "password": "Wachtwoord",
-          "username": "Gebruikersnaam (e-mail)"
+        "description": "Meld je aan op https://www.luminus.be/myluminus/nl/ in je browser. Open de ontwikkelaarstools (F12), tabblad Netwerk, herlaad de pagina, selecteer het eerste www.luminus.be-verzoek en kopieer de waarde van de 'cookie'-request-header. De sessie wordt automatisch vernieuwd; je moet enkel nieuwe cookies plakken als Home Assistant vraagt om opnieuw te verifiëren.",
+        "data": {
+          "cookies": "Cookies van www.luminus.be"
         }
       },
       "reconfigure": {
+        "description": "Meld je aan op https://www.luminus.be/myluminus/nl/ in je browser. Open de ontwikkelaarstools (F12), tabblad Netwerk, herlaad de pagina, selecteer het eerste www.luminus.be-verzoek en kopieer de waarde van de 'cookie'-request-header. De sessie wordt automatisch vernieuwd; je moet enkel nieuwe cookies plakken als Home Assistant vraagt om opnieuw te verifiëren.",
         "data": {
-          "password": "Wachtwoord",
-          "username": "Gebruikersnaam (e-mail)"
+          "cookies": "Cookies van www.luminus.be"
+        }
+      },
+      "reauth_confirm": {
+        "title": "My Luminus - sessie verlopen",
+        "description": "De My Luminus-sessie is niet langer geldig. Meld je aan op https://www.luminus.be/myluminus/nl/ in je browser. Open de ontwikkelaarstools (F12), tabblad Netwerk, herlaad de pagina, selecteer het eerste www.luminus.be-verzoek en kopieer de waarde van de 'cookie'-request-header. De sessie wordt automatisch vernieuwd; je moet enkel nieuwe cookies plakken als Home Assistant vraagt om opnieuw te verifiëren.",
+        "data": {
+          "cookies": "Cookies van www.luminus.be"
         }
       }
     }
-  }, 
+  },
   "entity": {
-	"sensor": {
-	  "product_name": { 
-		"name": "Productnaam" 
-	  },
-	  "dualDay": { 
-		"name": "Tweevoudige meter dag" 
-	  },
-	  "dualNight": { 
-		"name": "Tweevoudige meter nacht" 
-	  },
-	  "exclusiveNight": { 
-		"name": "Exclusief nachtmeter" 
-	  },
-	  "fixed": { 
-		"name": "Vaste vergoeding" 
-	  },
-	  "injectionDualDay": { 
-		"name": "Vergoeding geïnjecteerde energie dag" 
-	  },
-	  "injectionDualNight": { 
-		"name": "Vergoeding geïnjecteerde energie nacht" 
-	  },
-	  "injectionSingle": { 
-		"name": "Vergoeding geïnjecteerde energie" 
-	  },
-	  "single": { 
-		"name": "Enkelvoudige meter" 
-	  },
-	  "singleDay": { 
-		"name": "Enkelvoudige meter dag" 
-	  }
-	}
+    "sensor": {
+      "product_name": {
+        "name": "Productnaam"
+      },
+      "dualDay": {
+        "name": "Tweevoudige meter dag"
+      },
+      "dualNight": {
+        "name": "Tweevoudige meter nacht"
+      },
+      "exclusiveNight": {
+        "name": "Exclusief nachtmeter"
+      },
+      "fixed": {
+        "name": "Vaste vergoeding"
+      },
+      "injectionDualDay": {
+        "name": "Vergoeding geïnjecteerde energie dag"
+      },
+      "injectionDualNight": {
+        "name": "Vergoeding geïnjecteerde energie nacht"
+      },
+      "injectionSingle": {
+        "name": "Vergoeding geïnjecteerde energie"
+      },
+      "single": {
+        "name": "Enkelvoudige meter"
+      },
+      "singleDay": {
+        "name": "Enkelvoudige meter dag"
+      }
+    }
   }
 }

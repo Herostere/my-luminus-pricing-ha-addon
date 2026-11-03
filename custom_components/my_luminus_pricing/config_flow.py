@@ -1,76 +1,82 @@
 """Config flows for our integration.
 https://developers.home-assistant.io/docs/data_entry_flow_index/#labels--descriptions
+
+Authentication: the user pastes the Cookie header of a logged-in My Luminus
+browser session (www.luminus.be). There is no username/password login any more.
 """
 
 from __future__ import annotations
+from collections.abc import Mapping
 from typing import Any
 from homeassistant.config_entries import (
-    ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlow,
 )
-from homeassistant.const import (
-    CONF_CHOOSE,
-    CONF_DESCRIPTION,
-    CONF_HOST,
-    CONF_MINIMUM,
-    CONF_PASSWORD,
-    CONF_SCAN_INTERVAL,
-    CONF_SENSORS,
-    CONF_USERNAME,
-)
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.selector import selector
+from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
 
-from .api import API
-from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, MIN_SCAN_INTERVAL
+from .api import API, AuthError
+from .const import CONF_COOKIES, DOMAIN
 import logging
 import voluptuous as vol
-#from .coordinator import ExampleCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-# ----------------------------------------------------------------------------
-# Adjust the data schema to the data that you need
-# ----------------------------------------------------------------------------
-STEP_USER_DATA_SCHEMA = vol.Schema(
+# Masked field: the cookies give access to the account
+COOKIE_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
+
+STEP_COOKIES_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_USERNAME, description={"suggested_value": ""}): str,
-        vol.Required(CONF_PASSWORD, description={"suggested_value": ""}): str,
+        vol.Required(CONF_COOKIES): COOKIE_SELECTOR,
     }
 )
 
+
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
-    """Validate the user input allows us to connect.
+    """Validate that the pasted cookies give access to My Luminus.
 
-    Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
+    Raises InvalidAuth when the cookies are missing, expired or blocked, and
+    CannotConnect for any other failure.
     """
+    api = API(data[CONF_COOKIES])
+    if not api.cookies:
+        raise InvalidAuth("No cookies found in the pasted text")
+
     try:
-        # ----------------------------------------------------------------------------
-        # If your api is not async, use the executor to access it
-        # If you cannot connect, raise CannotConnect
-        # If the authentication is wrong, raise InvalidAuth
-        # ----------------------------------------------------------------------------
-        api = API(data[CONF_USERNAME], data[CONF_PASSWORD])
-        await hass.async_add_executor_job(api.login)
-    except Exception as e:
-        raise e("Error in config_flow.py/validate_input()")
-    return {"title": f"Luminus - {data[CONF_USERNAME]}"}
+        await hass.async_add_executor_job(api.renew)
+        meters = await hass.async_add_executor_job(api.get_meters)
+    except AuthError as err:
+        _LOGGER.warning("My Luminus rejected the cookies: %s", err)
+        raise InvalidAuth(str(err)) from err
+    except Exception as err:
+        _LOGGER.exception("Could not reach My Luminus")
+        raise CannotConnect(str(err)) from err
 
-
-async def validate_settings(hass: HomeAssistant, data: dict[str, Any]) -> bool:
-    """Another validation method for our config steps."""
-    return True
+    # Account id from the cookies; fall back to the meter EANs
+    account = api.account_id or ",".join(sorted(m.get("ean", "") for m in meters.get("meters", [])))
+    # Keep the cookies as renewed during validation, in case Luminus rotates them
+    cookies = "; ".join(f"{k}={v}" for k, v in api.cookies.items())
+    return {"title": f"Luminus - {account}", "unique_id": account, "cookies": cookies}
 
 
 class ExampleConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Example Integration."""
 
     VERSION = 1
-    _input_data: dict[str, Any]
-    _title: str
+
+    async def _async_validate(self, user_input: dict[str, Any], errors: dict[str, str]) -> dict[str, Any] | None:
+        """Run validate_input and translate failures to form errors."""
+        try:
+            return await validate_input(self.hass, user_input)
+        except InvalidAuth:
+            errors["base"] = "invalid_cookies"
+        except CannotConnect:
+            errors["base"] = "cannot_connect"
+        except Exception:  # pylint: disable=broad-except
+            _LOGGER.exception("Unexpected exception")
+            errors["base"] = "unknown"
+        return None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -83,50 +89,17 @@ class ExampleConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # The form has been filled in and submitted, so process the data provided.
-            try:
-                # ----------------------------------------------------------------------------
-                # Validate that the setup data is valid and if not handle errors.
-                # You can do any validation you want or no validation on each step.
-                # The errors["base"] values match the values in your strings.json and translation files.
-                # ----------------------------------------------------------------------------
-                info = await validate_input(self.hass, user_input)
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception")
-                errors["base"] = "unknown"
-
-            if "base" not in errors:
-                # Validation was successful, so proceed to the next step.
-
-                # ----------------------------------------------------------------------------
-                # Setting our unique id here just because we have the info at this stage to do that
-                # and it will abort early on in the process if alreay setup.
-                # You can put this in any step however.
-                # ----------------------------------------------------------------------------
-                await self.async_set_unique_id(info.get("title"))
+            info = await self._async_validate(user_input, errors)
+            if info is not None:
+                # Abort early if this account is already set up
+                await self.async_set_unique_id(info["unique_id"])
                 self._abort_if_unique_id_configured()
-
-                # Set our title variable here for use later
-                self._title = info["title"]
-
-                # ----------------------------------------------------------------------------
-                # You need to save the input data to a class variable as you go through each step
-                # to ensure it is accessible across all steps.
-                # ----------------------------------------------------------------------------
-                self._input_data = user_input
-
-                # Call the next step                
-                return self.async_create_entry(title=self._title, data=self._input_data)
+                return self.async_create_entry(title=info["title"], data={CONF_COOKIES: info["cookies"]})
 
         # Show initial form.
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_USER_DATA_SCHEMA,
-            description_placeholders={"name": "Add Luminus integration"},
+            data_schema=STEP_COOKIES_SCHEMA,
             errors=errors,
             last_step=True,  # Adding last_step True/False decides whether form shows Next or Submit buttons
         )
@@ -134,47 +107,52 @@ class ExampleConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Add reconfigure step to allow to reconfigure a config entry.
-
-        This methid displays a reconfigure option in the integration and is
-        different to options.
-        It can be used to reconfigure any of the data submitted when first installed.
-        This is optional and can be removed if you do not want to allow reconfiguration.
-        """
+        """Replace the cookies of an existing entry from the integration's menu."""
         errors: dict[str, str] = {}
-        config_entry = self.hass.config_entries.async_get_entry(
-            self.context["entry_id"]
-        )
 
         if user_input is not None:
-            try:
-                await validate_input(self.hass, user_input)
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception")
-                errors["base"] = "unknown"
-            else:
+            info = await self._async_validate(user_input, errors)
+            if info is not None:
+                # data= replaces everything, which also removes any old username/password
                 return self.async_update_reload_and_abort(
-                    config_entry,
-                    unique_id=config_entry.unique_id,
-                    data={**config_entry.data, **user_input},
+                    self._get_reconfigure_entry(),
+                    data={CONF_COOKIES: info["cookies"]},
                     reason="reconfigure_successful",
                 )
+
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_USERNAME, default=config_entry.data[CONF_USERNAME]
-                    ): str,
-                    vol.Required(CONF_PASSWORD): str,
-                }
-            ),
+            data_schema=STEP_COOKIES_SCHEMA,
             errors=errors,
         )
+
+    async def async_step_reauth(
+        self, entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
+        """Started by Home Assistant when the session cookies stop working."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask for fresh browser cookies."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            info = await self._async_validate(user_input, errors)
+            if info is not None:
+                return self.async_update_reload_and_abort(
+                    self._get_reauth_entry(),
+                    data={CONF_COOKIES: info["cookies"]},
+                    reason="reauth_successful",
+                )
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=STEP_COOKIES_SCHEMA,
+            errors=errors,
+        )
+
 
 class CannotConnect(HomeAssistantError):
     """Error to indicate we cannot connect."""

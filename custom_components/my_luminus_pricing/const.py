@@ -36,3 +36,10 @@ FORCAST_DATA_GAS = {
     8: 139,
     9: 248
 }
+
+# Cookie header of a logged-in My Luminus browser session (www.luminus.be),
+# format "name=value; name=value"
+CONF_COOKIES = "cookies"
+
+# Load a My Luminus page this often to renew the 24 h session cookies
+KEEPALIVE_INTERVAL_HOURS = 6

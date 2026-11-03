@@ -13,10 +13,13 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.device_registry import DeviceEntry
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .const import DOMAIN
-from .coordinator import LuminusCoordinator
+from datetime import timedelta
+
+from .const import DOMAIN, KEEPALIVE_INTERVAL_HOURS
+from .coordinator import LuminusCoordinator, cookie_store
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -75,6 +78,13 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: MyConfigEntry) ->
         config_entry.add_update_listener(_async_update_listener)
     )
 
+    # Keep the 24 h My Luminus session alive between data refreshes
+    config_entry.async_on_unload(
+        async_track_time_interval(
+            hass, coordinator.async_keep_alive, timedelta(hours=KEEPALIVE_INTERVAL_HOURS)
+        )
+    )
+
     # ----------------------------------------------------------------------------
     # Add the coordinator and update listener to your config entry to make
     # accessible throughout your integration
@@ -121,3 +131,8 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: MyConfigEntry) -
 
     # Unload platforms and return result
     return await hass.config_entries.async_unload_platforms(config_entry, PLATFORMS)
+
+
+async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
+    """Delete the stored session cookies when the integration is removed."""
+    await cookie_store(hass, config_entry.entry_id).async_remove()
