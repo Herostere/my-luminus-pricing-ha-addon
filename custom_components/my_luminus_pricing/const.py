@@ -17,7 +17,7 @@ FORCAST_DATA_ELECTRICITY = {
     4: 110,  # July
     5: 117,  # August
     6: 90,   # September
-    7: 87,   # October
+    7: 104,  # October
     8: 94,   # November
     9: 98    # December
 }
@@ -32,7 +32,7 @@ FORCAST_DATA_GAS = {
     4: 1,
     5: 1,
     6: 2,
-    7: 14,
+    7: 51,
     8: 139,
     9: 248
 }
