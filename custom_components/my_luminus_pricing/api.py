@@ -9,7 +9,9 @@ a CAPTCHA to automated clients. The session cookies (__session__0, __session__1)
 are valid for 24 hours and are renewed by loading a My Luminus page (renew()).
 """
 
+import base64
 import http.cookiejar
+import json
 import logging
 import threading
 from datetime import datetime, timezone
@@ -90,6 +92,42 @@ def _is_deletion(attrs: dict[str, str]) -> bool:
     return False
 
 
+def _describe_set_cookie(name: str, attrs: dict[str, str], deleted: bool) -> str:
+    """Describe a Set-Cookie header for diagnostics, without its value."""
+    if deleted:
+        return f"{name} (deleted, path {attrs.get('path', '/')})"
+    if 'max-age' in attrs:
+        expiry = f"max-age {attrs['max-age']}s"
+    elif attrs.get('expires'):
+        expiry = f"expires {attrs['expires']}"
+    else:
+        expiry = 'browser-session cookie'
+    return f"{name} ({expiry}, path {attrs.get('path', '/')})"
+
+
+def session_token_header(cookies: dict[str, str]) -> dict[str, Any] | None:
+    """Decode the unencrypted JOSE header of the Auth0 session cookie.
+
+    The session cookie is an encrypted token (JWE) split over __session__0,
+    __session__1, ... Its first segment is a plain base64url JSON header that
+    may carry the session timestamps (iat, uat, exp). Contains no secrets.
+    """
+    token = cookies.get('__session__0') or cookies.get('__session') or cookies.get('appSession')
+    if not token:
+        return None
+    segment = token.split('.', 1)[0]
+    try:
+        header = json.loads(base64.urlsafe_b64decode(segment + '=' * (-len(segment) % 4)))
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(header, dict):
+        return None
+    for key in ('iat', 'uat', 'exp'):
+        if isinstance(header.get(key), (int, float)):
+            header[key] = datetime.fromtimestamp(header[key], timezone.utc).isoformat()
+    return header
+
+
 class API:
 
     def __init__(self, cookies: dict[str, str] | str) -> None:
@@ -100,6 +138,8 @@ class API:
         # Cookies are managed by hand in self.cookies (see _apply_set_cookies), so
         # block the session's own cookie jar to avoid duplicate cookies.
         self.session.cookies.set_policy(http.cookiejar.DefaultCookiePolicy(allowed_domains=[]))
+        # Diagnostics: Set-Cookie headers of the last request (names and expiry only)
+        self.last_set_cookies: list[str] = []
 
 
     @property
@@ -109,6 +149,7 @@ class API:
 
     def _apply_set_cookies(self, r: requests.Response) -> None:
         """Store cookies the server sets or renews, like a browser would."""
+        self.last_set_cookies = []
         for header in r.raw.headers.getlist('Set-Cookie'):
             first, _, rest = header.partition(';')
             if '=' not in first:
@@ -119,8 +160,10 @@ class API:
                 k, _, v = a.partition('=')
                 attrs[k.strip().lower()] = v.strip()
             path = attrs.get('path', '/')
+            deleted = _is_deletion(attrs)
+            self.last_set_cookies.append(_describe_set_cookie(name, attrs, deleted))
 
-            if _is_deletion(attrs):
+            if deleted:
                 # Luminus also clears stale copies under /myluminus; only a
                 # deletion of the site-wide cookie removes ours.
                 if path == '/':
@@ -140,6 +183,8 @@ class API:
             )
             self._apply_set_cookies(r)
 
+        _LOGGER.debug('GET %s: status %s, Set-Cookie: %s', path, r.status_code,
+                      ', '.join(self.last_set_cookies) or 'none')
         if r.status_code == 403 and 'Incapsula' in r.text:
             raise IncapsulaBlocked('Blocked by Incapsula bot protection')
         if r.is_redirect or r.status_code in (401, 403):
@@ -153,7 +198,9 @@ class API:
     def renew(self) -> None:
         """Load a My Luminus page; the response renews the 24 h session cookies."""
         self._request(RENEW_PATH)
-        _LOGGER.debug('Luminus session renewed')
+        renewed = [c for c in self.last_set_cookies if c.startswith(('__session', 'appSession'))]
+        _LOGGER.info('Luminus session renewal: session cookies set: %s; session token header: %s',
+                     ', '.join(renewed) or 'none', session_token_header(self.cookies))
 
 
     def get_meters(self) -> list[dict[str, Any]]:

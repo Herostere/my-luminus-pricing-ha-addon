@@ -33,6 +33,38 @@ REGISTER_PRICE_KEYS = {
 }
 
 
+def _registers(consumption: dict[str, Any] | None) -> set[str]:
+    """Offtake registers (Day, Night, TotalHours, ...) seen in the meter readings."""
+    consumption = consumption or {}
+    registers = {
+        d.get("timeFrame")
+        for d in (consumption.get("periodQuantities") or {}).get("details", [])
+        if d.get("direction") == "Offtake"
+    }
+    for reading in consumption.get("indexes", []):
+        registers.update(
+            i.get("timeOfUse") for i in reading.get("indexes", []) if i.get("direction") == "Offtake"
+        )
+    registers.discard(None)
+    return registers
+
+
+def _meter_type(meter: dict[str, Any], consumption: dict[str, Any] | None) -> str:
+    """Price set matching the meter.
+
+    activeMeterType is not reliable: Luminus reports "single" for meters whose
+    readings have separate Day and Night registers. Day/Night readings therefore
+    select the dual prices; otherwise activeMeterType is used.
+    """
+    prices = meter["prices"]
+    if {"Day", "Night"} <= _registers(consumption) and "dual" in prices:
+        return "dual"
+    meter_type = meter.get("activeMeterType")
+    if meter_type in prices:
+        return meter_type
+    return "dual" if "dual" in prices else next(iter(prices))
+
+
 def cookie_store(hass: HomeAssistant, entry_id: str) -> Store:
     """Storage file holding the renewed session cookies of one config entry.
 
@@ -62,6 +94,9 @@ class LuminusCoordinator(DataUpdateCoordinator):
         self._store = cookie_store(hass, config_entry.entry_id)
         self._saved_cookies: dict[str, str] | None = None
         self.api: API | None = None
+        # Diagnostics: when the pasted cookies were first used, last successful renewal
+        self._seeded_at: str | None = None
+        self._renewed_at: str | None = None
 
         # Parsed settlements {invoice id: parsed tariffs or {"error": ...}}
         self._settlement_store = settlement_store(hass, config_entry.entry_id)
@@ -100,16 +135,45 @@ class LuminusCoordinator(DataUpdateCoordinator):
         # New or re-pasted cookies: start from what the user entered
         self.api = API(stored["cookies"] if same_seed else self.entry_cookies)
         self._saved_cookies = dict(self.api.cookies) if same_seed else None
+        if same_seed:
+            self._seeded_at = stored.get("seeded_at")
+            self._renewed_at = stored.get("renewed_at")
+        else:
+            self._seeded_at = dt_util.utcnow().isoformat()
+            self._renewed_at = None
 
         self._settlements = (await self._settlement_store.async_load() or {}).get("parsed", {})
 
 
-    async def _async_save_cookies(self) -> None:
+    async def _async_save_cookies(self, force: bool = False) -> None:
         """Persist renewed cookies so a restart continues the same session."""
-        if self.api is None or self.api.cookies == self._saved_cookies:
+        if self.api is None or (not force and self.api.cookies == self._saved_cookies):
             return
-        await self._store.async_save({"seed": self._seed, "cookies": self.api.cookies})
+        await self._store.async_save({
+            "seed": self._seed,
+            "cookies": self.api.cookies,
+            "seeded_at": self._seeded_at,
+            "renewed_at": self._renewed_at,
+        })
         self._saved_cookies = dict(self.api.cookies)
+
+
+    async def _async_renew(self) -> None:
+        """Renew the session and record when it last succeeded."""
+        await self.hass.async_add_executor_job(self.api.renew)
+        self._renewed_at = dt_util.utcnow().isoformat()
+        await self._async_save_cookies(force=True)
+
+
+    def _session_age(self) -> str:
+        """Describe the session's age for diagnostics when it stops working."""
+        now = dt_util.utcnow()
+
+        def ago(stamp: str | None) -> str:
+            parsed = dt_util.parse_datetime(stamp) if stamp else None
+            return f"{(now - parsed).total_seconds() / 3600:.1f} h ago ({stamp})" if parsed else "unknown"
+
+        return f"cookies pasted {ago(self._seeded_at)}, last successful renewal {ago(self._renewed_at)}"
 
 
     async def async_keep_alive(self, _now=None) -> None:
@@ -117,10 +181,12 @@ class LuminusCoordinator(DataUpdateCoordinator):
         if self.api is None:
             return
         try:
-            await self.hass.async_add_executor_job(self.api.renew)
-            await self._async_save_cookies()
+            await self._async_renew()
         except AuthError as err:
-            _LOGGER.error("My Luminus session no longer valid (%s); paste fresh browser cookies when asked to reauthenticate", err)
+            _LOGGER.error(
+                "My Luminus session no longer valid (%s; %s); paste fresh browser cookies when asked to reauthenticate",
+                err, self._session_age(),
+            )
             self.config_entry.async_start_reauth(self.hass)
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.warning("My Luminus keep-alive failed, will retry: %s", err)
@@ -222,7 +288,12 @@ class LuminusCoordinator(DataUpdateCoordinator):
             "current_advance": (budget or {}).get("advanceAmount"),
         }
         if not tariffs or not simulation.get("fromDate") or not simulation.get("untilDate"):
-            attributes["status"] = "no tariffs from a settlement yet" if not tariffs else "no budget period from Luminus"
+            if not tariffs:
+                attributes["status"] = "no tariffs from a settlement yet"
+            elif budget is None:
+                attributes["status"] = "no budget-billing data from Luminus for this meter"
+            else:
+                attributes["status"] = "no budget period from Luminus"
             return values, attributes
 
         readings = fc.readings_from_api(consumption.get("indexes", []))
@@ -289,10 +360,24 @@ class LuminusCoordinator(DataUpdateCoordinator):
         """
         try:
             # Renew the session first; this also detects expired cookies early
-            await self.hass.async_add_executor_job(self.api.renew)
+            await self._async_renew()
             meters = await self.hass.async_add_executor_job(self.api.get_meters)
             budgets = await self.hass.async_add_executor_job(self.api.get_advance_and_paid)
-            budget_by_ean = {b.get("ean"): b for b in budgets or []}
+            budget_by_ean = {
+                b.get("ean"): b for b in (budgets if isinstance(budgets, list) else []) if isinstance(b, dict)
+            }
+            missing = {m['ean'] for m in meters['meters']} - set(budget_by_ean)
+            if missing:
+                # Diagnostics: structure only, no amounts or personal data
+                shape = (
+                    f"list of {len(budgets)}" if isinstance(budgets, list)
+                    else f"{type(budgets).__name__} with keys {sorted(budgets)}" if isinstance(budgets, dict)
+                    else type(budgets).__name__
+                )
+                _LOGGER.warning(
+                    "Luminus budget-billing has no entry for EAN(s) %s; response: %s (%s)",
+                    ", ".join(sorted(missing)), shape, self._session_age(),
+                )
             all_tariffs = await self._async_update_settlements({m['ean'] for m in meters['meters']})
 
             today = dt_util.now().date()
@@ -309,9 +394,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
 
                 pname = meterDetails['productName']
                 prices = meterDetails['prices']
-                meterType = meterDetails.get('activeMeterType')
-                if meterType not in prices:
-                    meterType = "dual" if "dual" in prices else next(iter(prices))
+                meterType = _meter_type(meterDetails, consumptionDetails)
                 meterPrices = prices[meterType]
 
                 device = {
@@ -338,6 +421,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
 
         except AuthError as err:
             # Home Assistant starts a reauthentication flow asking for fresh cookies
+            _LOGGER.error("My Luminus session no longer valid (%s; %s)", err, self._session_age())
             raise ConfigEntryAuthFailed(f"My Luminus cookies no longer valid: {err}") from err
 
         except Exception as err:
