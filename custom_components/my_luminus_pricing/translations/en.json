@@ -5,34 +5,38 @@
       "already_configured": "Device is already configured",
       "reconfigure_successful": "Reconfiguration successful",
       "already_in_progress": "A setup is already in progress for this integration",
-      "reauth_successful": "Reauthentication successful"
+      "reauth_successful": "Reauthentication successful",
+      "wrong_account": "This login belongs to a different My Luminus account."
     },
     "error": {
       "cannot_connect": "Failed to connect",
-      "invalid_auth": "Invalid authentication",
+      "invalid_auth": "Luminus rejected the email or password.",
       "invalid_settings": "Invalid settings",
       "unknown": "Unexpected error",
-      "invalid_cookies": "Luminus rejected the cookies (expired, logged out or blocked). Copy fresh cookies from your browser."
+      "verification_required": "Luminus asks for extra verification of this login (bot protection). Wait a few hours before trying again; repeated attempts keep the block active."
     },
     "step": {
       "user": {
-        "title": "My Luminus - Add device",
-        "description": "Log in at https://www.luminus.be/myluminus/nl/ in your browser. Open the developer tools (F12), Network tab, reload the page, select the first www.luminus.be request and copy the value of the 'cookie' request header. The session is renewed automatically; you only need to paste new cookies if Home Assistant asks you to reauthenticate.",
+        "title": "My Luminus - Add account",
+        "description": "Enter the email address and password of your My Luminus account. Home Assistant logs in the way the Luminus app does and logs in again by itself when needed.",
         "data": {
-          "cookies": "Cookies from www.luminus.be"
+          "username": "Email",
+          "password": "Password"
         }
       },
       "reconfigure": {
-        "description": "Log in at https://www.luminus.be/myluminus/nl/ in your browser. Open the developer tools (F12), Network tab, reload the page, select the first www.luminus.be request and copy the value of the 'cookie' request header. The session is renewed automatically; you only need to paste new cookies if Home Assistant asks you to reauthenticate.",
+        "description": "Change the email address or password of your My Luminus account.",
         "data": {
-          "cookies": "Cookies from www.luminus.be"
+          "username": "Email",
+          "password": "Password"
         }
       },
       "reauth_confirm": {
-        "title": "My Luminus - Session expired",
-        "description": "The My Luminus session is no longer valid. Log in at https://www.luminus.be/myluminus/nl/ in your browser. Open the developer tools (F12), Network tab, reload the page, select the first www.luminus.be request and copy the value of the 'cookie' request header. The session is renewed automatically; you only need to paste new cookies if Home Assistant asks you to reauthenticate.",
+        "title": "My Luminus - Log in again",
+        "description": "Luminus no longer accepts the saved login. Enter the email address and password of your My Luminus account.",
         "data": {
-          "cookies": "Cookies from www.luminus.be"
+          "username": "Email",
+          "password": "Password"
         }
       }
     }

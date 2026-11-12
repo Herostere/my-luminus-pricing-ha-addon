@@ -8,10 +8,10 @@ HTTP_TIMEOUT = 60
 # Fallback gas conversion factor (kWh per m³) until a gas settlement has been read
 GAS_M3_TO_KWH = 11.3
 
-
-# Cookie header of a logged-in My Luminus browser session (www.luminus.be),
-# format "name=value; name=value"
+# Config entries created with browser cookies (version 1) only held this key;
+# it is removed when such an entry is migrated
 CONF_COOKIES = "cookies"
 
-# Load a My Luminus page this often to renew the 24 h session cookies
-KEEPALIVE_INTERVAL_HOURS = 6
+# Refresh token from the login in the config flow, so setup does not log in a
+# second time; later tokens are kept in the token store (see coordinator.py)
+CONF_REFRESH_TOKEN = "refresh_token"

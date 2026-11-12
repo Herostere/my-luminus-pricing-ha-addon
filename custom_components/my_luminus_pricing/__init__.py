@@ -13,13 +13,10 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.device_registry import DeviceEntry
-from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from datetime import timedelta
-
-from .const import DOMAIN, KEEPALIVE_INTERVAL_HOURS
-from .coordinator import LuminusCoordinator, cookie_store, settlement_store
+from .const import CONF_COOKIES, DOMAIN
+from .coordinator import LuminusCoordinator, cookie_store, settlement_store, token_store
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,13 +75,6 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: MyConfigEntry) ->
         config_entry.add_update_listener(_async_update_listener)
     )
 
-    # Keep the 24 h My Luminus session alive between data refreshes
-    config_entry.async_on_unload(
-        async_track_time_interval(
-            hass, coordinator.async_keep_alive, timedelta(hours=KEEPALIVE_INTERVAL_HOURS)
-        )
-    )
-
     # ----------------------------------------------------------------------------
     # Add the coordinator and update listener to your config entry to make
     # accessible throughout your integration
@@ -98,6 +88,20 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: MyConfigEntry) ->
     await hass.config_entries.async_forward_entry_setups(config_entry, PLATFORMS)
 
     # Return true to denote a successful setup.
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Migrate entries created with browser cookies (version 1).
+
+    The cookies are dropped. The entry then has no email and password, so setup
+    raises ConfigEntryAuthFailed and Home Assistant asks the user to log in once.
+    """
+    if config_entry.version == 1:
+        data = {k: v for k, v in config_entry.data.items() if k != CONF_COOKIES}
+        hass.config_entries.async_update_entry(config_entry, data=data, version=2)
+        await cookie_store(hass, config_entry.entry_id).async_remove()
+        _LOGGER.info("Migrated My Luminus entry to email/password login; please log in")
     return True
 
 
@@ -134,6 +138,7 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: MyConfigEntry) -
 
 
 async def async_remove_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
-    """Delete the stored session cookies and parsed settlements when the integration is removed."""
+    """Delete the stored tokens and parsed settlements when the integration is removed."""
+    await token_store(hass, config_entry.entry_id).async_remove()
     await cookie_store(hass, config_entry.entry_id).async_remove()
     await settlement_store(hass, config_entry.entry_id).async_remove()

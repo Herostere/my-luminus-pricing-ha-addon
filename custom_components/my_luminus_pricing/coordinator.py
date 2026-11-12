@@ -1,12 +1,11 @@
 """DataUpdateCoordinator for our integration."""
 
-import hashlib
 import logging
 from datetime import date, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_SCAN_INTERVAL
+from homeassistant.const import CONF_PASSWORD, CONF_SCAN_INTERVAL, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import issue_registry as ir
@@ -17,15 +16,22 @@ from homeassistant.util import dt as dt_util
 
 from . import forecast as fc
 from . import tariffs as tf
-from .api import API, AuthError
-from .const import CONF_COOKIES, DEFAULT_SCAN_INTERVAL, DOMAIN, GAS_M3_TO_KWH
+from .api import API, AuthError, VerificationRequired
+from .const import CONF_REFRESH_TOKEN, DEFAULT_SCAN_INTERVAL, DOMAIN, GAS_M3_TO_KWH
 from .weather import async_fetch_temperatures
 
 _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
 
-# Meter register -> price key in the price-information response
+# Invoice EnergyType (mobile API) -> energy types of the meters it covers
+INVOICE_ENERGIES = {
+    "Electricity": {"Electricity"},
+    "Gas": {"Gas"},
+    "ElectricityAndGas": {"Electricity", "Gas"},
+}
+
+# Meter register -> price key in the pricing response
 REGISTER_PRICE_KEYS = {
     "Day": ("dualDay", "single"),
     "Night": ("dualNight", "exclusiveNight", "single"),
@@ -65,12 +71,17 @@ def _meter_type(meter: dict[str, Any], consumption: dict[str, Any] | None) -> st
     return "dual" if "dual" in prices else next(iter(prices))
 
 
-def cookie_store(hass: HomeAssistant, entry_id: str) -> Store:
-    """Storage file holding the renewed session cookies of one config entry.
+def token_store(hass: HomeAssistant, entry_id: str) -> Store:
+    """Storage file holding the Luminus refresh token of one config entry.
 
     Kept outside the config entry on purpose: updating the entry's data
     triggers the update listener in __init__.py, which reloads the integration.
     """
+    return Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}.token")
+
+
+def cookie_store(hass: HomeAssistant, entry_id: str) -> Store:
+    """Storage file of the former browser-cookie login; only used to delete it."""
     return Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}.cookies")
 
 
@@ -87,16 +98,14 @@ class LuminusCoordinator(DataUpdateCoordinator):
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
         """Initialize coordinator."""
 
-        # Cookies pasted in the config flow; renewed cookies are kept in self._store
-        self.entry_cookies = config_entry.data.get(CONF_COOKIES, "")
-        # Identifies which pasted cookies the stored (renewed) cookies descend from
-        self._seed = hashlib.sha256(self.entry_cookies.encode()).hexdigest()
-        self._store = cookie_store(hass, config_entry.entry_id)
-        self._saved_cookies: dict[str, str] | None = None
+        # Credentials from the config flow; the refresh token is kept in self._store
+        self.username = config_entry.data.get(CONF_USERNAME, "")
+        self.password = config_entry.data.get(CONF_PASSWORD, "")
+        # Token from the config flow login; identifies which stored token descends from it
+        self.entry_token = config_entry.data.get(CONF_REFRESH_TOKEN)
+        self._store = token_store(hass, config_entry.entry_id)
+        self._saved_refresh_token: str | None = None
         self.api: API | None = None
-        # Diagnostics: when the pasted cookies were first used, last successful renewal
-        self._seeded_at: str | None = None
-        self._renewed_at: str | None = None
 
         # Parsed settlements {invoice id: parsed tariffs or {"error": ...}}
         self._settlement_store = settlement_store(hass, config_entry.entry_id)
@@ -126,94 +135,65 @@ class LuminusCoordinator(DataUpdateCoordinator):
 
 
     async def _async_setup(self) -> None:
-        """Load the latest renewed cookies and parsed settlements before the first refresh."""
-        if not self.entry_cookies:
-            raise ConfigEntryAuthFailed("No My Luminus cookies configured")
+        """Load the saved refresh token and parsed settlements before the first refresh."""
+        if not self.username or not self.password:
+            # Entries migrated from the browser-cookie login: ask for email and password
+            raise ConfigEntryAuthFailed("Log in to My Luminus with your email and password")
 
-        stored = await self._store.async_load()
-        same_seed = bool(stored and stored.get("seed") == self._seed and stored.get("cookies"))
-        # New or re-pasted cookies: start from what the user entered
-        self.api = API(stored["cookies"] if same_seed else self.entry_cookies)
-        self._saved_cookies = dict(self.api.cookies) if same_seed else None
-        if same_seed:
-            self._seeded_at = stored.get("seeded_at")
-            self._renewed_at = stored.get("renewed_at")
-        else:
-            self._seeded_at = dt_util.utcnow().isoformat()
-            self._renewed_at = None
+        stored = await self._store.async_load() or {}
+        # The stored token is newer than the config flow's, unless the user logged in
+        # again since (new entry token) or changed account
+        same_login = stored.get("username") == self.username and stored.get("entry_token") == self.entry_token
+        refresh_token = stored.get("refresh_token") if same_login else self.entry_token
+        self.api = API(self.username, self.password, refresh_token)
+        self._saved_refresh_token = refresh_token if same_login else None
 
         self._settlements = (await self._settlement_store.async_load() or {}).get("parsed", {})
 
 
-    async def _async_save_cookies(self, force: bool = False) -> None:
-        """Persist renewed cookies so a restart continues the same session."""
-        if self.api is None or (not force and self.api.cookies == self._saved_cookies):
+    async def _async_save_token(self) -> None:
+        """Persist the refresh token whenever Luminus issues a new one."""
+        if self.api is None or self.api.refresh_token == self._saved_refresh_token:
             return
         await self._store.async_save({
-            "seed": self._seed,
-            "cookies": self.api.cookies,
-            "seeded_at": self._seeded_at,
-            "renewed_at": self._renewed_at,
+            "username": self.username,
+            "entry_token": self.entry_token,
+            "refresh_token": self.api.refresh_token,
         })
-        self._saved_cookies = dict(self.api.cookies)
-
-
-    async def _async_renew(self) -> None:
-        """Renew the session and record when it last succeeded."""
-        await self.hass.async_add_executor_job(self.api.renew)
-        self._renewed_at = dt_util.utcnow().isoformat()
-        await self._async_save_cookies(force=True)
-
-
-    def _session_age(self) -> str:
-        """Describe the session's age for diagnostics when it stops working."""
-        now = dt_util.utcnow()
-
-        def ago(stamp: str | None) -> str:
-            parsed = dt_util.parse_datetime(stamp) if stamp else None
-            return f"{(now - parsed).total_seconds() / 3600:.1f} h ago ({stamp})" if parsed else "unknown"
-
-        return f"cookies pasted {ago(self._seeded_at)}, last successful renewal {ago(self._renewed_at)}"
-
-
-    async def async_keep_alive(self, _now=None) -> None:
-        """Renew the 24 h session between (12 h) data refreshes."""
-        if self.api is None:
-            return
-        try:
-            await self._async_renew()
-        except AuthError as err:
-            _LOGGER.error(
-                "My Luminus session no longer valid (%s; %s); paste fresh browser cookies when asked to reauthenticate",
-                err, self._session_age(),
-            )
-            self.config_entry.async_start_reauth(self.hass)
-        except Exception as err:  # pylint: disable=broad-except
-            _LOGGER.warning("My Luminus keep-alive failed, will retry: %s", err)
+        self._saved_refresh_token = self.api.refresh_token
 
 
     # ----------------------------------------------------------------------------
     # Tariffs and weather
     # ----------------------------------------------------------------------------
 
-    async def _async_update_settlements(self, current_eans: set[str]) -> dict[str, Any]:
+    async def _async_update_settlements(self, current_energies: set[str]) -> dict[str, Any]:
         """Parse settlement PDFs not seen before; return the merged tariffs per energy type.
 
-        Only settlements of the current meters (EANs) are used, so tariffs from a
-        previous address, possibly with another network operator, never mix in.
+        The mobile API lists invoices without EANs, so settlements are matched to
+        the current meters by energy type only. Tariffs from a previous address
+        are older than the current ones and are superseded by merge_settlements,
+        which keeps the newest settlement per tariff component.
         """
+        # Website version, matched settlements to the current meters by EAN:
+        # invoices = await self.hass.async_add_executor_job(self.api.get_invoices)
+        # for invoice in invoices:
+        #     if invoice.get("type") != "Settlement" or "Detail" not in invoice.get("documents", []):
+        #         continue
+        #     invoice_id = str(invoice["id"])
+        #     energies = {
+        #         c.get("energyType") for c in invoice.get("contractInfo", []) if c.get("ean") in current_eans
+        #     }
         invoices = await self.hass.async_add_executor_job(self.api.get_invoices)
-        # invoice id -> energy types of that settlement that belong to a current meter
+        # document number -> energy types of that settlement that belong to a current meter
         current: dict[str, set[str]] = {}
         changed = False
         for invoice in invoices:
-            if invoice.get("type") != "Settlement" or "Detail" not in invoice.get("documents", []):
+            if invoice.get("Category") != "Settlement" or not invoice.get("DownloadDetailAvailable"):
                 continue
-            invoice_id = str(invoice["id"])
-            energies = {
-                c.get("energyType") for c in invoice.get("contractInfo", []) if c.get("ean") in current_eans
-            }
-            if not energies:
+            invoice_id = str(invoice.get("DocumentNumber") or "")
+            energies = INVOICE_ENERGIES.get(invoice.get("EnergyType"), set()) & current_energies
+            if not invoice_id or not energies:
                 continue
             current[invoice_id] = energies
             if invoice_id in self._settlements:
@@ -222,7 +202,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
                 pdf = await self.hass.async_add_executor_job(self.api.get_invoice_pdf, invoice_id)
                 text = await self.hass.async_add_executor_job(tf.pdf_text, pdf)
                 self._settlements[invoice_id] = tf.parse_settlement_text(text)
-                _LOGGER.info("Read tariffs from Luminus settlement of %s", invoice.get("date", "")[:10])
+                _LOGGER.info("Read tariffs from Luminus settlement of %s", str(invoice.get("Date") or "")[:10])
             except AuthError:
                 raise
             except Exception as err:  # pylint: disable=broad-except
@@ -359,8 +339,6 @@ class LuminusCoordinator(DataUpdateCoordinator):
         to be used to provide values for all your entities.
         """
         try:
-            # Renew the session first; this also detects expired cookies early
-            await self._async_renew()
             meters = await self.hass.async_add_executor_job(self.api.get_meters)
             budgets = await self.hass.async_add_executor_job(self.api.get_advance_and_paid)
             budget_by_ean = {
@@ -375,10 +353,10 @@ class LuminusCoordinator(DataUpdateCoordinator):
                     else type(budgets).__name__
                 )
                 _LOGGER.warning(
-                    "Luminus budget-billing has no entry for EAN(s) %s; response: %s (%s)",
-                    ", ".join(sorted(missing)), shape, self._session_age(),
+                    "Luminus budget-billing has no entry for EAN(s) %s; response: %s",
+                    ", ".join(sorted(missing)), shape,
                 )
-            all_tariffs = await self._async_update_settlements({m['ean'] for m in meters['meters']})
+            all_tariffs = await self._async_update_settlements({m['energyType'] for m in meters['meters']})
 
             today = dt_util.now().date()
             temps = await self._async_update_temperatures(today)
@@ -419,10 +397,15 @@ class LuminusCoordinator(DataUpdateCoordinator):
 
             _LOGGER.info('Data updated.')
 
+        except VerificationRequired as err:
+            # Retrying would only repeat the challenge: ask the user instead
+            _LOGGER.error("Luminus asks for extra verification of the login (%s); log in again later", err)
+            raise ConfigEntryAuthFailed(f"My Luminus login needs verification: {err}") from err
+
         except AuthError as err:
-            # Home Assistant starts a reauthentication flow asking for fresh cookies
-            _LOGGER.error("My Luminus session no longer valid (%s; %s)", err, self._session_age())
-            raise ConfigEntryAuthFailed(f"My Luminus cookies no longer valid: {err}") from err
+            # Home Assistant starts a reauthentication flow asking for the email and password
+            _LOGGER.error("Luminus rejected the saved email and password (%s)", err)
+            raise ConfigEntryAuthFailed(f"My Luminus login failed: {err}") from err
 
         except Exception as err:
             # This will show entities as unavailable by raising UpdateFailed exception.
@@ -430,7 +413,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"Error communicating with API: {err}") from err
 
         finally:
-            await self._async_save_cookies()
+            await self._async_save_token()
 
         # What is returned here is stored in self.data by the DataUpdateCoordinator
         return data

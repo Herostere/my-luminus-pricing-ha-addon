@@ -5,34 +5,38 @@
       "already_configured": "Apparaat is reeds geconfigureerd",
       "reconfigure_successful": "Herconfiguratie voltooid",
       "already_in_progress": "De installatieprocedure is reeds opgestart",
-      "reauth_successful": "Herverificatie voltooid"
+      "reauth_successful": "Herverificatie voltooid",
+      "wrong_account": "Deze aanmelding hoort bij een ander My Luminus-account."
     },
     "error": {
       "cannot_connect": "Kan geen verbinding maken",
-      "invalid_auth": "Authenticatie mislukt",
+      "invalid_auth": "Luminus weigerde het e-mailadres of wachtwoord.",
       "invalid_settings": "Ongeldige configuratie",
       "unknown": "Onbehandelde fout",
-      "invalid_cookies": "Luminus weigerde de cookies (verlopen, afgemeld of geblokkeerd). Kopieer nieuwe cookies uit je browser."
+      "verification_required": "Luminus vraagt extra verificatie voor deze aanmelding (botbeveiliging). Wacht enkele uren voor je opnieuw probeert; herhaalde pogingen houden de blokkering actief."
     },
     "step": {
       "user": {
-        "title": "My Luminus - apparaat toevoegen",
-        "description": "Meld je aan op https://www.luminus.be/myluminus/nl/ in je browser. Open de ontwikkelaarstools (F12), tabblad Netwerk, herlaad de pagina, selecteer het eerste www.luminus.be-verzoek en kopieer de waarde van de 'cookie'-request-header. De sessie wordt automatisch vernieuwd; je moet enkel nieuwe cookies plakken als Home Assistant vraagt om opnieuw te verifiëren.",
+        "title": "My Luminus - account toevoegen",
+        "description": "Geef het e-mailadres en wachtwoord van je My Luminus-account in. Home Assistant meldt zich aan zoals de Luminus-app en meldt zich zelf opnieuw aan wanneer nodig.",
         "data": {
-          "cookies": "Cookies van www.luminus.be"
+          "username": "E-mail",
+          "password": "Wachtwoord"
         }
       },
       "reconfigure": {
-        "description": "Meld je aan op https://www.luminus.be/myluminus/nl/ in je browser. Open de ontwikkelaarstools (F12), tabblad Netwerk, herlaad de pagina, selecteer het eerste www.luminus.be-verzoek en kopieer de waarde van de 'cookie'-request-header. De sessie wordt automatisch vernieuwd; je moet enkel nieuwe cookies plakken als Home Assistant vraagt om opnieuw te verifiëren.",
+        "description": "Wijzig het e-mailadres of wachtwoord van je My Luminus-account.",
         "data": {
-          "cookies": "Cookies van www.luminus.be"
+          "username": "E-mail",
+          "password": "Wachtwoord"
         }
       },
       "reauth_confirm": {
-        "title": "My Luminus - sessie verlopen",
-        "description": "De My Luminus-sessie is niet langer geldig. Meld je aan op https://www.luminus.be/myluminus/nl/ in je browser. Open de ontwikkelaarstools (F12), tabblad Netwerk, herlaad de pagina, selecteer het eerste www.luminus.be-verzoek en kopieer de waarde van de 'cookie'-request-header. De sessie wordt automatisch vernieuwd; je moet enkel nieuwe cookies plakken als Home Assistant vraagt om opnieuw te verifiëren.",
+        "title": "My Luminus - opnieuw aanmelden",
+        "description": "Luminus aanvaardt de opgeslagen aanmelding niet meer. Geef het e-mailadres en wachtwoord van je My Luminus-account in.",
         "data": {
-          "cookies": "Cookies van www.luminus.be"
+          "username": "E-mail",
+          "password": "Wachtwoord"
         }
       }
     }
