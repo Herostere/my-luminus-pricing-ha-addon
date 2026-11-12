@@ -25,11 +25,12 @@ _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 1
 
 # Invoice EnergyType (mobile API) -> energy types of the meters it covers
-INVOICE_ENERGIES = {
-    "Electricity": {"Electricity"},
-    "Gas": {"Gas"},
-    "ElectricityAndGas": {"Electricity", "Gas"},
-}
+# Mobile API (GetAccountStatement, retired by Luminus): invoice EnergyType -> energy types
+# INVOICE_ENERGIES = {
+#     "Electricity": {"Electricity"},
+#     "Gas": {"Gas"},
+#     "ElectricityAndGas": {"Electricity", "Gas"},
+# }
 
 # Meter register -> price key in the pricing response
 REGISTER_PRICE_KEYS = {
@@ -167,13 +168,14 @@ class LuminusCoordinator(DataUpdateCoordinator):
     # Tariffs and weather
     # ----------------------------------------------------------------------------
 
-    async def _async_update_settlements(self, current_energies: set[str]) -> dict[str, Any]:
+    async def _async_update_settlements(self, current_eans: set[str], current_energies: set[str]) -> dict[str, Any]:
         """Parse settlement PDFs not seen before; return the merged tariffs per energy type.
 
-        The mobile API lists invoices without EANs, so settlements are matched to
-        the current meters by energy type only. Tariffs from a previous address
-        are older than the current ones and are superseded by merge_settlements,
-        which keeps the newest settlement per tariff component.
+        The account statement lists the EAN and energy type of every contract on
+        an invoice, so only settlements of the current meters are used. When the
+        invoice list cannot be read, the settlements parsed before are used,
+        matched by energy type; merge_settlements keeps the newest settlement per
+        tariff component.
         """
         # Website version, matched settlements to the current meters by EAN:
         # invoices = await self.hass.async_add_executor_job(self.api.get_invoices)
@@ -184,15 +186,44 @@ class LuminusCoordinator(DataUpdateCoordinator):
         #     energies = {
         #         c.get("energyType") for c in invoice.get("contractInfo", []) if c.get("ean") in current_eans
         #     }
-        invoices = await self.hass.async_add_executor_job(self.api.get_invoices)
-        # document number -> energy types of that settlement that belong to a current meter
+        try:
+            invoices = await self.hass.async_add_executor_job(self.api.get_invoices)
+        except AuthError:
+            raise
+        except Exception as err:  # pylint: disable=broad-except
+            # Keep the integration running on the settlements read before (the invoice
+            # list endpoint can disappear when Luminus changes its app API)
+            _LOGGER.warning("Could not list Luminus invoices, using the settlements read before: %s", err)
+            return tf.merge_settlements([
+                {energy: section for energy, section in parsed.items() if energy in current_energies}
+                for parsed in self._settlements.values()
+                if "error" not in parsed
+            ])
+        # Mobile API version (GetAccountStatement, no EANs, matched by energy type only):
+        # for invoice in invoices:
+        #     if invoice.get("Category") != "Settlement" or not invoice.get("DownloadDetailAvailable"):
+        #         continue
+        #     invoice_id = str(invoice.get("DocumentNumber") or "")
+        #     energies = INVOICE_ENERGIES.get(invoice.get("EnergyType"), set()) & current_energies
+
+        # Drop settlements that are no longer on the account statement (for example
+        # ones stored under the document numbers of the retired mobile API). An empty
+        # list is not trusted, so a bad response cannot wipe the stored settlements.
+        listed = {str(invoice.get("id")) for invoice in invoices if invoice.get("id")}
+        stale = [invoice_id for invoice_id in self._settlements if listed and invoice_id not in listed]
+        for invoice_id in stale:
+            del self._settlements[invoice_id]
+        changed = bool(stale)
+
+        # invoice id -> energy types of that settlement that belong to a current meter
         current: dict[str, set[str]] = {}
-        changed = False
         for invoice in invoices:
-            if invoice.get("Category") != "Settlement" or not invoice.get("DownloadDetailAvailable"):
+            if invoice.get("type") != "Settlement" or "Detail" not in (invoice.get("documents") or []):
                 continue
-            invoice_id = str(invoice.get("DocumentNumber") or "")
-            energies = INVOICE_ENERGIES.get(invoice.get("EnergyType"), set()) & current_energies
+            invoice_id = str(invoice.get("id") or "")
+            energies = {
+                c.get("energyType") for c in invoice.get("contractInfo") or [] if c.get("ean") in current_eans
+            }
             if not invoice_id or not energies:
                 continue
             current[invoice_id] = energies
@@ -202,7 +233,7 @@ class LuminusCoordinator(DataUpdateCoordinator):
                 pdf = await self.hass.async_add_executor_job(self.api.get_invoice_pdf, invoice_id)
                 text = await self.hass.async_add_executor_job(tf.pdf_text, pdf)
                 self._settlements[invoice_id] = tf.parse_settlement_text(text)
-                _LOGGER.info("Read tariffs from Luminus settlement of %s", str(invoice.get("Date") or "")[:10])
+                _LOGGER.info("Read tariffs from Luminus settlement of %s", str(invoice.get("date") or "")[:10])
             except AuthError:
                 raise
             except Exception as err:  # pylint: disable=broad-except
@@ -356,7 +387,10 @@ class LuminusCoordinator(DataUpdateCoordinator):
                     "Luminus budget-billing has no entry for EAN(s) %s; response: %s",
                     ", ".join(sorted(missing)), shape,
                 )
-            all_tariffs = await self._async_update_settlements({m['energyType'] for m in meters['meters']})
+            all_tariffs = await self._async_update_settlements(
+                {m['ean'] for m in meters['meters']},
+                {m['energyType'] for m in meters['meters']},
+            )
 
             today = dt_util.now().date()
             temps = await self._async_update_temperatures(today)

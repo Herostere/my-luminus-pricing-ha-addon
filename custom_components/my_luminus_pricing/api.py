@@ -10,7 +10,9 @@ email and password are used to log in again. Data comes from the endpoints the
 app uses:
 
 - https://myluminus-api.luminus.be/  (app backend, same data as the website API)
-- https://mobileapi.luminus.be/api/v11/  (mobile API, invoices)
+
+The mobile API (https://mobileapi.luminus.be/api/v11/) that listed the invoices
+was retired by Luminus in November 2026; the invoices now come from the app backend.
 
 The previous authentication (browser session cookies on www.luminus.be) was
 removed: the website session expired within a day. The website endpoints it
@@ -37,7 +39,8 @@ CLIENT_ID = 'IKPSr122AreYvrlNgRVE8o3vuscGETbe'
 SCOPE = 'openid profile offline_access email email_verified'
 
 APP_API_URL = 'https://myluminus-api.luminus.be/'
-MOBILE_API_URL = 'https://mobileapi.luminus.be/api/v11/'
+# Retired mobile API, kept for reference:
+# MOBILE_API_URL = 'https://mobileapi.luminus.be/api/v11/'
 
 # Settlement PDFs are served from Azure blob storage through signed links
 DOCUMENT_HOST_SUFFIX = '.blob.core.windows.net'
@@ -207,17 +210,19 @@ class API:
 
 
     def get_invoices(self) -> list[dict[str, Any]]:
-        """Invoices of the account (mobile API).
+        """Invoices of the account (account statement of the app backend).
 
-        Fields used: Category ("Settlement", "Advance"), EnergyType ("Electricity",
-        "Gas", "ElectricityAndGas"), DocumentNumber, Date, DownloadDetailAvailable.
+        Fields used: type ("Settlement", "Advance"), id, date, documents ("Detail",
+        "Overview"), contractInfo[].ean/energyType.
         """
         # Website: self.get_data('/myluminus/api/invoices').get('invoices', [])
-        # (fields type, id, date, documents, contractInfo[].ean/energyType)
-        return self.get_data(MOBILE_API_URL + 'GetAccountStatement').get('Invoices') or []
+        # (same fields)
+        # Mobile API (retired): self.get_data(MOBILE_API_URL + 'GetAccountStatement').get('Invoices') or []
+        # (fields Category, EnergyType, DocumentNumber, Date, DownloadDetailAvailable; no EANs)
+        return self.get_data(APP_API_URL + 'invoicing/commodity/account-statement').get('invoices') or []
 
 
-    def get_invoice_pdf(self, document_number: str) -> bytes:
+    def get_invoice_pdf(self, invoice_id: str) -> bytes:
         """Download the detailed PDF of an invoice (settlements list every tariff line)."""
         # Website:
         # meta = self.get_data(f'/myluminus/api/invoice-document/{invoice_id}?format=pdf&detailed=true')
@@ -225,14 +230,14 @@ class API:
         # if url.scheme != 'https' or url.netloc != urlparse(BASE_URL).netloc:
         #     raise RuntimeError(f'Unexpected document location for invoice {invoice_id}: {url.netloc}')
         # r = self._request(url.path + (f'?{url.query}' if url.query else ''))
-        meta = self.get_data(APP_API_URL + f'documents/commodity/invoice/{document_number}?detailed=true')
+        meta = self.get_data(APP_API_URL + f'documents/commodity/invoice/{invoice_id}?detailed=true')
         url = urlparse(meta.get('contentUrl', ''))
         if url.scheme != 'https' or not url.netloc.endswith(DOCUMENT_HOST_SUFFIX):
-            raise RuntimeError(f'Unexpected document location for invoice {document_number}: {url.netloc}')
+            raise RuntimeError(f'Unexpected document location for invoice {invoice_id}: {url.netloc}')
         # Signed link: download without the access token (the storage refuses it anyway)
         r = requests.get(meta['contentUrl'], headers={'User-Agent': defHeaders['User-Agent']}, timeout=HTTP_TIMEOUT)
         if r.status_code != requests.codes.ok:
-            raise RuntimeError(f'Invoice {document_number} download returned status {r.status_code}')
+            raise RuntimeError(f'Invoice {invoice_id} download returned status {r.status_code}')
         if not r.content.startswith(b'%PDF'):
-            raise RuntimeError(f'Invoice {document_number} document is not a PDF')
+            raise RuntimeError(f'Invoice {invoice_id} document is not a PDF')
         return r.content
